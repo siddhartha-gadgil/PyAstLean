@@ -19,7 +19,7 @@ unsafe def main(args : List String) : IO Unit := do
       match task with
       | "translate_expr" =>
         let .ok json := jsonTask.getObjValAs? Json "ast" | IO.throwServerError "Invalid JSON: missing 'ast' field or it is not a JSON value"
-        let code? ← getCodeTermIO json ctx env
+        let code? ← getCodeIO json `term ctx env
         match code? with
         | .ok code =>
           let jsCode := Json.mkObj [("result", Json.bool true), ("lean_expression", code.pretty)]

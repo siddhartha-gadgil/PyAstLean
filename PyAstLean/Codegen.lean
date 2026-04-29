@@ -201,23 +201,6 @@ def getCode (json: Json) (kind: SyntaxNodeKind) : PygenM <| TSyntax kind := do
   | some code => return code
   | none => throwError s!"pygen: no function found for key '{key}' and syntax category '{kind}'"
 
-def getCodeTerm (json: Json) : PygenM <| Term := do
-  let codeStx ← getCode json `term
-  try
-    let cmd ← `(command| example := $codeStx)
-    liftCommandElabM <| Command.elabCommand cmd
-    -- withoutErrToSorry do
-    -- let codeTerm ← elabTerm codeStx none
-    -- -- let type ← inferType codeTerm
-    -- Term.synthesizeSyntheticMVarsUsingDefault
-    -- if codeTerm.hasMVar then
-    --   throwError s!"Generated code has metavariables, which means it is not fully elaborated: {codeTerm}"
-    -- -- IO.eprintln s!"Elaborated code: {codeTerm} with type {type}"
-    -- PrettyPrinter.delab codeTerm
-    return codeStx
-  catch e =>
-    throwError s!"Error elaborating code: {← e.toMessageData.toString}"
-
 def getCodeCore (json: Json) (kind: SyntaxNodeKind) : CoreM <| Except String Format := do
   try
     let code := getCode json kind
@@ -228,26 +211,6 @@ def getCodeCore (json: Json) (kind: SyntaxNodeKind) : CoreM <| Except String For
     return .ok fmt
   catch e =>
     return .error s!"Error generating code: {← e.toMessageData.toString}"
-
-def getCodeTermCore (json: Json) : CoreM <| Except String Format := do
-  try
-    let code := getCodeTerm json
-    let codeElab := code.run' {}
-    let codeMeta := codeElab.run' {} {}
-    let codeCore ← codeMeta.run' {} {}
-    let fmt ← PrettyPrinter.ppTerm codeCore
-    return .ok fmt
-  catch e =>
-    return .error s!"Error generating code: {← e.toMessageData.toString}"
-
-def getCodeTermIO (json: Json) (ctx : Core.Context) (env: Environment) : IO <| Except String Format := do
-  let code := getCodeTermCore json
-  let eio := code.run' ctx {env := env}
-  match ← eio.toIO' with
-  | .ok code =>
-    return code
-  | .error err =>
-    return .error s!"Error generating code: {← err.toMessageData.toString}"
 
 def getCodeIO (json: Json) (kind: SyntaxNodeKind) (ctx : Core.Context) (env: Environment) :
   IO <| Except String Format := do
