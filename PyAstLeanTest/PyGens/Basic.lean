@@ -50,4 +50,37 @@ def stringNatBinOpNode := json% {
   "value": -1.5
 }
 
+#eval py_term% json% {
+    "node_type": "BinOp",
+    "op": "add",
+    "left": {
+      "node_type": "Constant",
+      "value": 1
+    },
+    "right": {
+      "node_type": "Constant",
+      "value": 2
+    }
+  }
+
+/--
+error: Error in code generation function PyAstLean.binOpSyntax for key 'BinOp' and syntax category 'term': Error elaborating code: failed to synthesize instance of type class
+  PyAstLean.PyHMul String ℕ ?m.4
+
+Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command.
+-/
+#guard_msgs in
+#eval py_term% json% {
+    "node_type": "BinOp",
+    "op": "mul",
+    "left": {
+      "node_type": "Constant",
+      "value": "three"
+    },
+    "right": {
+      "node_type": "Constant",
+      "value": 4
+    }
+  }
+
 end PyAstLean
