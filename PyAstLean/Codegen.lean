@@ -38,17 +38,36 @@ def withPygenState {α : Type} (modifyState : PyGen.State → PyGen.State) (x : 
     set saved
     throw e
 
+def withPygenStateField {α β : Type} (getField : PyGen.State → β)
+    (setField : PyGen.State → β → PyGen.State) (value : β) (x : PygenM α) :
+    PygenM α := do
+  let saved := getField (← get)
+  modify fun st => setField st value
+  try
+    let result ← x
+    modify fun st => setField st saved
+    return result
+  catch e =>
+    modify fun st => setField st saved
+    throw e
+
 def withoutCheck {α : Type} (x : PygenM α) : PygenM α :=
-  withPygenState (fun st => { st with checkExr := false }) x
+  withPygenStateField (·.checkExr) (fun st checkExr => { st with checkExr := checkExr }) false x
 
 def withUseArrow {α : Type} (x : PygenM α) : PygenM α :=
-  withPygenState (fun st => { st with useArrow := true }) x
+  withPygenStateField (·.useArrow) (fun st useArrow => { st with useArrow := useArrow }) true x
 
 def isCheckEnabled : PygenM Bool := do
   return (← get).checkExr
 
 def isUseArrowEnabled : PygenM Bool := do
   return (← get).useArrow
+
+def hasVar (usedName : Name) : PygenM Bool := do
+  return (← get).varNames.contains usedName
+
+def addVar (usedName : Name) : PygenM Unit := do
+  modify fun st => { st with varNames := st.varNames.insert usedName }
 
 instance : MonadEvalT PygenM TermElabM where
     monadEval := fun x => x.run' {}

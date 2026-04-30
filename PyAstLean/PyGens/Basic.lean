@@ -9,7 +9,9 @@ def intToStx (n : Int) : MetaM <| TSyntax `term := do
     let nStx := Syntax.mkNumLit (toString (-n))
     `(- $nStx:term)
   else
-    return Syntax.mkNumLit (toString n)
+    let nStx := Syntax.mkNumLit (toString (n))
+    let intIdent := mkIdent ``Int
+    `(($nStx : $intIdent))
 
 def numToStx (mantissa : Int) (exponent : Nat) : MetaM <| TSyntax `term := do
   match exponent with
@@ -235,22 +237,4 @@ def elabCheckCmd : (stx : TSyntax `command) → PygenM (TSyntax `command)
     catch e =>
       throwError s!"Error elaborating code: {← e.toMessageData.toString}"
 
-
-/-!
-## Function definitions
-
-A sample Python AST:
-
-```python
-Module(body=[FunctionDef(name='f', args=arguments(posonlyargs=[], args=[arg(arg='n')], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='m', ctx=Store())], value=BinOp(left=Name(id='n', ctx=Load()), op=Add(), right=Constant(value=1))), Return(value=Name(id='m', ctx=Load()))], decorator_list=[], type_params=[])], type_ignores=[])
-```
-
-For the definition:
-
-```python
-def f(n):
-    m = n + 1
-    return m
-```
--/
 end PyAstLean
