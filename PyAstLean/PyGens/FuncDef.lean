@@ -1,5 +1,6 @@
 import Mathlib
 import PyAstLean.Codegen
+import PyAstLean.PyGens.Basic
 open Lean Meta Elab Term Qq Std
 
 namespace PyAstLean
@@ -77,3 +78,8 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
           IO.eprintln s!"Generated syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
           return cmd
     | kind, _ => throwError s!"Unsupported syntax category `{kind}` for FuncDef node"
+
+def f := fun n =>
+      let x := n +ₚ 1
+      let y := x *ₚ 2
+      x +ₚ y

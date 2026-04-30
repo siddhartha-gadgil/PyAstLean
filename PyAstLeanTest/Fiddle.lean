@@ -23,3 +23,10 @@ def letEg : MetaM Unit := do
 #check Lean.Parser.Term.letDecl
 #check Lean.Parser.Term.doLet
 #check Expr.isAppOf
+
+def eg : Id Unit := Id.run do
+    let mut n := 1
+    while n < 10 do
+        let m := n * 2
+        n := m + 1
+    return

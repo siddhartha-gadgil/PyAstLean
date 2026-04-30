@@ -59,6 +59,7 @@ class PyHAdd (α β : Type) (γ : outParam Type) where
 
 infix:65 " +ₚ " => PyHAdd.hAdd
 
+@[default_instance]
 instance {α β γ} [HAdd α β γ] : PyHAdd α β γ where
   hAdd := HAdd.hAdd
 
@@ -80,6 +81,7 @@ class PyHMul (α β : Type) (γ : outParam Type) where
   hMul : α → β → γ
 infix:70 " *ₚ " => PyHMul.hMul
 
+@[default_instance]
 instance {α β γ} [HMul α β γ] : PyHMul α β γ where
   hMul := HMul.hMul
 
@@ -187,6 +189,7 @@ def elabCheckTerm : (stx : TSyntax `term) → PygenM (TSyntax `term)
     try
       let cmd ← `(command| example := $codeStx)
       liftCommandElabM <| Command.elabCommand cmd
+      IO.eprintln s!"Successfully elaborated term: {codeStx}"  -- Debugging output
       return codeStx
     catch e =>
       throwError s!"Error elaborating code: {← e.toMessageData.toString}"
@@ -206,6 +209,19 @@ def addArrow : (stx : TSyntax `term) → PygenM (TSyntax `term)
     catch e =>
       trace[pyastlean.pygen.info] m!"addArrow transform failed for {codeStx} with error: {← e.toMessageData.toString}"
       return codeStx
+
+@[pygen_transform command]
+def elabCheckCmd : (stx : TSyntax `command) → PygenM (TSyntax `command)
+  | cmd => do
+    unless ← isCheckEnabled do
+      return cmd
+    try
+      liftCommandElabM <| Command.elabCommand cmd
+      IO.eprintln s!"Successfully elaborated command: {cmd}"  -- Debugging output
+      return cmd
+    catch e =>
+      throwError s!"Error elaborating code: {← e.toMessageData.toString}"
+
 
 /-!
 ## Function definitions
