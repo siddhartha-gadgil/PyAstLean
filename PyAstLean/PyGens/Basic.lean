@@ -163,12 +163,10 @@ def attributeSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Attribute node does not have a 'value' field or it is not a JSON value: {json}"
     let .ok attr := json.getObjValAs? String "attr" | throwError
       s!"Attribute node does not have an 'attr' field or it is not a string: {json}"
-    match valueJson.getObjValAs? String "node_type" with
-    | .ok "Name" => do
-      let .ok id := valueJson.getObjValAs? String "id" | throwError
-        s!"Name node does not have an 'id' field or it is not a string: {valueJson}"
-      return mkIdent <| id.toName ++ attr.toName
-    | _ => do
+    try
+      let id ← getCode valueJson `ident
+      return mkIdent <| id.getId ++ attr.toName
+    catch _ => do
       -- IO.eprintln s!"Generating code for Attribute value: {valueJson} as value not a name" -- Debugging output
       let valueCode ←
           getCode valueJson `term
