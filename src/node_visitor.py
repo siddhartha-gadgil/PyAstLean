@@ -38,6 +38,7 @@ class ASTToJsonLeanVisitorBase:
         
         # Fetch the specific method, falling back to generic_visit if it doesn't exist
         visitor = getattr(self, method_name, self.generic_visit)
+        print(f"Visiting node type: {type(node).__name__} with visitor method: {visitor.__name__}", file=sys.stderr)  # Debugging output
         
         return visitor(node)
 

@@ -16,6 +16,7 @@ unsafe def main(args : List String) : IO Unit := do
     match Json.parse jsStr with
     | .ok jsonTask =>
       let .ok task := jsonTask.getObjValAs? String "task" | IO.throwServerError "Invalid JSON: missing 'task' field or it is not a string"
+      IO.eprintln s!"Received task: {task}"  -- Debugging output
       match task with
       | "translate" =>
         let target := args[1]?.getD "term"
