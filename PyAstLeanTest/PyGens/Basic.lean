@@ -67,27 +67,7 @@ def stringNatBinOpNode := json% {
 error: Error in code generation function PyAstLean.binOpSyntax for key 'BinOp' and syntax category 'term': Error elaborating code: failed to synthesize instance of type class
   PyAstLean.PyHMul String ℤ ?m.4
 
-Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command.
----
-info: getting code for json: ⏎
-{"right": {"value": 4, "node_type": "Constant"},
- "op": "mul",
- "node_type": "BinOp",
- "left": {"value": "three", "node_type": "Constant"}}
-getCode: found functions '#[PyAstLean.binOpSyntax]' for key 'BinOp' and syntax category 'term'
-getting code for json: ⏎
-{"value": "three", "node_type": "Constant"}
-getCode: found functions '#[PyAstLean.constantSyntax]' for key 'Constant' and syntax category 'term'
-Successfully elaborated term: (str "\"three\"")
-getting code for json: ⏎
-{"value": 4, "node_type": "Constant"}
-getCode: found functions '#[PyAstLean.constantSyntax]' for key 'Constant' and syntax category 'term'
-Successfully elaborated term: (Term.typeAscription
- (Term.hygienicLParen "(" (hygieneInfo `_@.PyAstLeanTest.PyGens.Basic.2462443340._hygCtx._hyg.3))
- (num "4")
- ":"
- [`Int]
- ")")
+Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command. for "three" *ₚ (4 : Int)
 -/
 #guard_msgs in
 #eval py_term% json% {
