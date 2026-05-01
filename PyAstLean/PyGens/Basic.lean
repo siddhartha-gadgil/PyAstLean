@@ -204,10 +204,10 @@ def elabCheckTerm : (stx : TSyntax `term) → PygenM (TSyntax `term)
     try
       let cmd ← `(command| example := $codeStx)
       liftCommandElabM <| Command.elabCommand cmd
-      IO.eprintln s!"Successfully elaborated term: {codeStx}"  -- Debugging output
+      -- IO.eprintln s!"Successfully elaborated term: {codeStx}"  -- Debugging output
       return codeStx
     catch e =>
-      throwError s!"Error elaborating code: {← e.toMessageData.toString}"
+      throwError s!"Error elaborating code: {← e.toMessageData.toString} for {← PrettyPrinter.ppTerm codeStx}"
 
 @[pygen_transform term]
 def addArrow : (stx : TSyntax `term) → PygenM (TSyntax `term)
@@ -232,9 +232,9 @@ def elabCheckCmd : (stx : TSyntax `command) → PygenM (TSyntax `command)
       return cmd
     try
       liftCommandElabM <| Command.elabCommand cmd
-      IO.eprintln s!"Successfully elaborated command: {← PrettyPrinter.ppCommand cmd}"  -- Debugging output
+      -- IO.eprintln s!"Successfully elaborated command: {← PrettyPrinter.ppCommand cmd}"  -- Debugging output
       return cmd
     catch e =>
-      throwError s!"Error elaborating code: {← e.toMessageData.toString}"
+      throwError s!"Error elaborating code: {← e.toMessageData.toString} for {← PrettyPrinter.ppCommand cmd}"
 
 end PyAstLean

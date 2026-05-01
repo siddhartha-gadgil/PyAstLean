@@ -39,7 +39,7 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
         let .ok value := json.getObjVal? "value" | throwError
           s!"Assign node does not have a 'value' field or it is not a JSON value: {json}"
         let valueStx ← getCode value `term
-        `(def $nameIdent : _ := $valueStx)
+        `(def $nameIdent := $valueStx)
     | `doElem, json => do
         let .ok target := json.getObjVal? "target" | throwError
           s!"Assign node does not have a 'target' field or it is not a JSON value: {json}"
@@ -50,10 +50,10 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
         if ← hasVar nameIdent.getId then
             `(doElem| $nameIdent:ident := $valueStx)
         else
-            IO.eprintln s!"Variable `{nameIdent.getId}` not found in context, treating as new variable declaration; variables: {(← get).varNames.toList}"  -- Debugging output
+            -- IO.eprintln s!"Variable `{nameIdent.getId}` not found in context, treating as new variable declaration; variables: {(← get).varNames.toList}"  -- Debugging output
             let stx ← `(doElem| let mut $nameIdent:ident := $valueStx)
             addVar nameIdent.getId
-            IO.eprintln s!"Added variable `{nameIdent.getId}` to context, check: {← hasVar nameIdent.getId}"  -- Debugging output
+            -- IO.eprintln s!"Added variable `{nameIdent.getId}` to context, check: {← hasVar nameIdent.getId}"  -- Debugging output
             return stx
     | _, _ => throwError s!"Unsupported syntax category for Assign node"
 
@@ -76,7 +76,7 @@ def splitList : List Json -> PygenM Json
     let .ok nodeType := first.getObjValAs? String "node_type" | throwError
       s!"First element of list does not have a 'node_type' field or it is not a string: {first}"
     let newNodeType := "Head_" ++ nodeType
-    let newJson := first.mergeObj (Json.mkObj [("node_type", newNodeType), ("args", toJson rest)])
+    let newJson := first.mergeObj (Json.mkObj [("node_type", newNodeType), ("rest", toJson rest)])
     return newJson
 
 @[pygen "FunctionDef"]
@@ -104,7 +104,7 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
           let spl ← splitList bodyElems.toList
           let bodyStx ← withoutCheck do
               getCode spl `term
-          let t ← `(def $nameIdent := $bodyStx)
+          let t ← `(def $nameIdent := fun $argIdents* ↦ $bodyStx)
           return t
         catch e =>
           IO.eprintln s!"Could not generate pure function: {← e.toMessageData.toString}"
@@ -112,18 +112,49 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
             let elemStx ← withoutCheck do
                 getCode elem `doElem
             bodyStxArray := bodyStxArray.push elemStx
-            IO.eprintln s!"Generated syntax for function body element"  -- Debugging output
-            IO.eprintln s!"Variables: {(← get).varNames.toList}"  -- Debugging output
+            -- IO.eprintln s!"Generated syntax for function body element"  -- Debugging output
+            -- IO.eprintln s!"Variables: {(← get).varNames.toList}"  -- Debugging output
         let idRunIdent := mkIdent ``Id.run
         if argIdents.isEmpty then
           `(def $nameIdent := $idRunIdent do
               $[$bodyStxArray:doElem]*)
         else
-          let cmd ← `(def $nameIdent := fun $argIdents* => $idRunIdent do
+          let cmd ← `(def $nameIdent := fun $argIdents* ↦ $idRunIdent do
               $[$bodyStxArray:doElem]*)
-          IO.eprintln s!"Generated syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
+          IO.eprintln s!"Generated (monadic) syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
           return cmd
     | kind, _ => throwError s!"Unsupported syntax category `{kind}` for FuncDef node"
+
+@[pygen "Head_Assign"]
+def assignHeadSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `term, json => do
+        let .ok target := json.getObjVal? "target" | throwError
+          s!"Assign node does not have a 'target' field or it is not a JSON value: {json}"
+        let nameIdent ← getCode target `ident
+        let .ok value := json.getObjVal? "value" | throwError
+          s!"Assign node does not have a 'value' field or it is not a JSON value: {json}"
+        let valueStx ← getCode value `term
+        let .ok rest := json.getObjValAs? (List Json) "rest" | throwError
+          s!"Assign node does not have a 'rest' field or it is not a JSON value: {json}"
+        let splitRest ← splitList rest
+        let tailCode ← withoutCheck do
+            getCode splitRest `term
+        `(let $nameIdent := $valueStx
+          $tailCode)
+    | _, _ => throwError s!"Unsupported syntax category for Head_Assign node"
+
+@[pygen "Head_Return"]
+def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `term, json => do
+        let .ok value := json.getObjVal? "value" | throwError
+          s!"Return node does not have a 'value' field or it is not a JSON value: {json}"
+        let valueStx ←
+          withoutCheck do
+          getCode value `term
+        return valueStx
+    | _, _ => throwError s!"Unsupported syntax category for Head_Return node"
 
 def f := fun n =>
       let x := n -ₚ 1

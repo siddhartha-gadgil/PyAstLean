@@ -238,8 +238,8 @@ def getCode (json: Json) (kind: SyntaxNodeKind) : PygenM <| TSyntax kind := do
   let .ok key := json.getObjValAs? String "node_type" | throwError
     s!"pygen: JSON object does not have a 'node_type' field or it is not a string: {json}"
   let fs ← pygenMatches key
-  IO.eprintln s!"getting code for json: \n{json.pretty}"
-  IO.eprintln s!"getCode: found functions '{fs}' for key '{key}' and syntax category '{kind}'" -- Debugging output
+  -- IO.eprintln s!"getting code for json: \n{json.pretty}"
+  -- IO.eprintln s!"getCode: found functions '{fs}' for key '{key}' and syntax category '{kind}'" -- Debugging output
   let code? ← fs.findSomeM? (fun f => do try
     let mut code ← codeFromFunc f json kind
     let transformers ← pygenTransformers kind
