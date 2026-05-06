@@ -1,3 +1,4 @@
+import argparse
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
@@ -42,3 +43,36 @@ def egProgram():
     x = y - 1
     return x + y
 """
+
+
+def main(argv=None):
+    """Command-line entry point for translating a Python file to Lean."""
+    parser = argparse.ArgumentParser(description="Translate a Python file to Lean.")
+    parser.add_argument("filename", help="Python source file to translate")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        default="term",
+        help="Lean target string to pass to the translator (default: term)",
+    )
+    args = parser.parse_args(argv)
+
+    source_code = Path(args.filename).read_text(encoding="utf-8")
+    result = translate_to_lean(source_code, args.target)
+
+    if isinstance(result, dict):
+        if result.get("result") is False:
+            print(result.get("error", "Translation failed."), file=sys.stderr)
+            return 1
+
+        code_key = f"lean_{args.target}"
+        if code_key in result:
+            print(result[code_key])
+            return 0
+
+    print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
