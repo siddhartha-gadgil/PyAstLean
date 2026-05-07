@@ -67,6 +67,27 @@ def returnSyntax : (kind : SyntaxNodeKind) → Json →
         `(doElem| return $valueStx)
     | _, _ => throwError s!"Unsupported syntax category for Return node"
 
+@[pygen "While"]
+def whileSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `doElem, json => do
+        let .ok test := json.getObjVal? "test" | throwError
+          s!"While node does not have a 'test' field or it is not a JSON value: {json}"
+        let testStx ← getCode test `term
+        let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
+          s!"While node does not have a 'body' field or it is not a JSON array: {json}"
+        let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
+          s!"While node does not have an 'orelse' field or it is not a JSON array: {json}"
+        unless orelseElems.isEmpty do
+          throwError "Python while-else blocks are not supported."
+        let mut bodyStxArray := #[]
+        for elem in bodyElems do
+            let elemStx ← getCode elem `doElem
+            bodyStxArray := bodyStxArray.push elemStx
+        `(doElem| while $testStx do
+            $[$bodyStxArray:doElem]*)
+    | _, _ => throwError s!"Unsupported syntax category for While node"
+
 /--
 Reformat a list of Json to an object with `node_type` the `node_type` of the original list's first element with "Head_" prefixed, and `args` the original list. This is needed to handle the case where the body of a function definition is a list of statements, which is represented as a JSON array in the input, but we want to treat it as a single JSON object with a specific `node_type` in our code generation. We use this to try to generate *pure* code, i.e., not Monadic code.
 -/
@@ -121,7 +142,7 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         else
           let cmd ← `(def $nameIdent := fun $argIdents* ↦ $idRunIdent do
               $[$bodyStxArray:doElem]*)
-          IO.eprintln s!"Generated (monadic) syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
+          -- IO.eprintln s!"Generated (monadic) syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
           return cmd
     | kind, _ => throwError s!"Unsupported syntax category `{kind}` for FuncDef node"
 

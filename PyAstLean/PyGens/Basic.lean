@@ -114,6 +114,28 @@ def binOpSyntax : (kind : SyntaxNodeKind) → Json →
     | _ => throwError s!"Unsupported binary operator: {op}"
   | _, _ => throwError s!"Unsupported syntax category for BinOp node"
 
+@[pygen "Compare"]
+def compareSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+  | `term, json => do
+    let .ok op := json.getObjValAs? String "op" | throwError
+      s!"Compare node does not have an 'op' field or it is not a string: {json}"
+    let .ok leftJson := json.getObjValAs? Json "left" | throwError
+      s!"Compare node does not have a 'left' field or it is not a JSON value: {json}"
+    let .ok rightJson := json.getObjValAs? Json "right" | throwError
+      s!"Compare node does not have a 'right' field or it is not a JSON value: {json}"
+    let leftCode ← getCode leftJson `term
+    let rightCode ← getCode rightJson `term
+    match op with
+    | "eq" => `($leftCode == $rightCode)
+    | "ne" => `($leftCode != $rightCode)
+    | "lt" => `($leftCode < $rightCode)
+    | "le" => `($leftCode <= $rightCode)
+    | "gt" => `($leftCode > $rightCode)
+    | "ge" => `($leftCode >= $rightCode)
+    | _ => throwError s!"Unsupported comparison operator: {op}"
+  | _, _ => throwError s!"Unsupported syntax category for Compare node"
+
 -- Example
 def onePlusTwoNode := json% {
     "node_type": "BinOp",

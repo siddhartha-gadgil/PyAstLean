@@ -68,6 +68,33 @@ class ASTToJsonLeanVisitorBase:
             "left": left_json,
             "right": right_json
         }
+
+    def visit_Compare(self, node):
+        """Translates ast.Compare (e.g., a <= b) to a JSON IR node."""
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise NotImplementedError("Chained comparisons are not supported.")
+
+        if isinstance(node.ops[0], ast.Eq):
+            op = "eq"
+        elif isinstance(node.ops[0], ast.NotEq):
+            op = "ne"
+        elif isinstance(node.ops[0], ast.Lt):
+            op = "lt"
+        elif isinstance(node.ops[0], ast.LtE):
+            op = "le"
+        elif isinstance(node.ops[0], ast.Gt):
+            op = "gt"
+        elif isinstance(node.ops[0], ast.GtE):
+            op = "ge"
+        else:
+            raise NotImplementedError(f"Comparison operator {type(node.ops[0]).__name__} not supported.")
+
+        return {
+            "node_type": "Compare",
+            "op": op,
+            "left": self.visit(node.left),
+            "right": self.visit(node.comparators[0])
+        }
     
     def visit_Constant(self, node):
         """Translates ast.Constant (e.g., 42, "hello") to a JSON IR node."""
@@ -169,6 +196,15 @@ class ASTToJsonLeanVisitorBase:
             "node_type": "Assign",
             "target": self.visit(node.targets[0]),
             "value": self.visit(node.value)
+        }
+
+    def visit_While(self, node):
+        """Translates ast.While to a JSON IR node."""
+        return {
+            "node_type": "While",
+            "test": self.visit(node.test),
+            "body": [self.visit(stmt) for stmt in node.body],
+            "orelse": [self.visit(stmt) for stmt in node.orelse]
         }
 
     def visit_Return(self, node):
