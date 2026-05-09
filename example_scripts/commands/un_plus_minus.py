@@ -1,2 +1,2 @@
 def f(n):
-    return +n - (-4)
+    return +n - (-n)

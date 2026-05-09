@@ -69,6 +69,10 @@ infix:65 " +ₚ " => PyHAdd.hAdd
 instance {α β γ} [HAdd α β γ] : PyHAdd α β γ where
   hAdd := HAdd.hAdd
 
+@[default_instance]
+instance (priority := high) : PyHAdd Rat Rat Rat where
+  hAdd := fun a b => (a : Rat) + (b : Rat)
+
 instance : PyHAdd String String String where
   hAdd := String.append
 
@@ -84,6 +88,10 @@ instance (priority:= low) {α β γ} [HSub α β γ] : PyHSub α β γ where
 @[default_instance]
 instance (priority := high) : PyHSub Nat Nat Int where
   hSub := fun a b => (a :  Int) - (b : Int)
+
+@[default_instance]
+instance (priority := high) : PyHSub Rat Int Rat where
+  hSub := fun a b => (a : Rat) - (b : Int)
 
 #eval 3 -ₚ 5
 
@@ -107,6 +115,10 @@ instance (priority := high) : PyHMul String Int String where
                         let n := n.toNat
                         String.intercalate "" (List.replicate n s)
 
+@[default_instance]
+instance (priority := high) : PyHMul Rat Rat Rat where
+  hMul := fun a b => (a : Rat) * (b : Rat)
+
 class PyHPow (α β : Type) (γ : outParam Type) where
   hPow : α → β → γ
 infix:80 " ^ₚ " => PyHPow.hPow
@@ -123,6 +135,9 @@ instance(priority := high) {α β}  [Pow α β]: PyHPow α β α where
 instance(priority := high) : PyHPow Rat Int Rat where
   hPow := fun a b => (a : Rat) ^ (b : Int)
 
+@[default_instance]
+instance(priority := high) : Neg Rat where
+  neg := fun a => - (a : Rat)
 
 @[pygen "BinOp"]
 def binOpSyntax : (kind : SyntaxNodeKind) → Json →
