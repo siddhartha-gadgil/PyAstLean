@@ -25,15 +25,18 @@ def translate_to_lean(source_code, target="term"):
     """Translates Python source code to Lean code by first converting it to JSON and then invoking the Lean code generator."""
     json_ir = translate_to_json(source_code)
     json_task = json.dumps({"task": "translate", "ast": json.loads(json_ir)})
+    py2lean_bin = parent_dir / ".lake" / "build" / "bin" / "py2lean"
+    cmd = [str(py2lean_bin), json_task, target] if py2lean_bin.exists() else ["lake", "exe", "py2lean", json_task, target]
     proc = subprocess.Popen(
-        ["lake", "exe", "py2lean", json_task, target],
+        cmd,
         cwd=parent_dir,
-        stdout=subprocess.PIPE,   # keep stdout if you want to read it
-        stderr=None,              # inherit parent's stderr (i.e., sys.stderr)
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-
-    stdout, _ = proc.communicate()    # Call the Lean code generator (assuming it's a standalone executable)
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        return {"result": False, "error": stderr.strip() or "py2lean backend failed"}
     return json.loads(stdout)
 
 def egProgram():
