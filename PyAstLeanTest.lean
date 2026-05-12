@@ -1,2 +1,2 @@
 import PyAstLeanTest.PyGens.Basic
-import PyAstLeanTest.PyAstLeanCheck
+import PyAstLeanTest.PALCRunner

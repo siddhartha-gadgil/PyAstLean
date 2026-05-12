@@ -27,3 +27,7 @@ name = "PyAstLeanTest"
 [[lean_exe]]
 name="py2lean"
 supportInterpreter = true
+
+[[lean_exe]]
+name="palc"
+supportInterpreter = true

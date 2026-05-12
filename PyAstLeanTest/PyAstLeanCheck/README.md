@@ -84,15 +84,63 @@ PyAstLeanCheck treats all of these as equivalent in checks:
 
 So `CHECK: while . <= .` will match output containing `while i ≤ n`.
 
+### 5. Whitespace-tolerant non-exact checks
+
+For `CHECK`, `CHECK-NOT`, `CHECK-ERR`, and `CHECK-ERR-NOT`, whitespace in the
+literal parts of the pattern is flexible: a space can match spaces, newlines,
+or indentation in pretty-printed Lean output.
+
+Example:
+
+```text
+CHECK: def GLOBAL_VAR := (42 : Int)
+```
+
+will match:
+
+```lean
+def GLOBAL_VAR :=
+  (42 : Int)
+```
+
+This flexibility only applies to literal pattern text. Capture regexes like
+`[[NAME:...]]` are left unchanged, and `CHECK-EXACT` / `CHECK-ERR-EXACT` remain strict.
+
 ## Adding a new case
 
 1. Add `PyAstLeanTest/PyAstLeanCheck/Cases/<name>.py`
 2. Add one `PYASTLEANCHECK` block at top (or anywhere in comments)
 3. Prefer shape checks over exact text
-4. Run:
+4. Run the whole suite:
 
 ```bash
 lake test
+```
+
+## Running one file
+
+For faster iteration, use the dedicated executable:
+
+```bash
+lake exe pyastleancheck conditionals
+```
+
+You can also pass a full path:
+
+```bash
+lake exe pyastleancheck PyAstLeanTest/PyAstLeanCheck/Cases/conditionals.py
+```
+
+Or run a few specific cases together:
+
+```bash
+lake exe pyastleancheck conditionals loops functions_and_calls
+```
+
+With no arguments, it runs the full `PyAstLeanCheck` suite:
+
+```bash
+lake exe pyastleancheck
 ```
 
 <details>

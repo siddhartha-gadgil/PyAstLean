@@ -74,8 +74,15 @@ pip install -r requirements.txt
 
 ## Testing
 
-We use `PyAstLeanCheck` (PALC) to test the generated Lean code. Its role is similar to LLVM's FileCheck.
 
+PyAstLeanCheck (PALC) (pronounced - "pal" + "ack" like PAL Acknowledge) is the testing framework for PyAstLean. It is used to check that the generated Lean code matches the expected output. This is based on the FileCheck utility from LLVM, but with some differences to make it more suitable for our use case.
+
+To run all tests:
 ```bash
 lake test
+```
+
+If you want to run a specific test case, you can do so with:
+```bash
+lake exe palc <case_file.py>
 ```

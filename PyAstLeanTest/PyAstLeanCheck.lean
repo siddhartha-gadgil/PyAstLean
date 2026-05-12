@@ -105,10 +105,20 @@ def escapeRegexChar (c : Char) : String :=
 def escapeRegexLiteral (s : String) : String :=
   String.join <| s.toList.map escapeRegexChar
 
+def whitespaceRegex : String :=
+  "[ \t\r\n]+"
+
+def isPatternWhitespace (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\r' || c == '\n'
+
 partial def literalToRegexAux : List Char → String
   | '\\' :: '.' :: rest => "\\." ++ literalToRegexAux rest
   | '.' :: rest => ".+" ++ literalToRegexAux rest
-  | c :: rest => escapeRegexChar c ++ literalToRegexAux rest
+  | c :: rest =>
+      if isPatternWhitespace c then
+        whitespaceRegex ++ literalToRegexAux (rest.dropWhile isPatternWhitespace)
+      else
+        escapeRegexChar c ++ literalToRegexAux rest
   | [] => ""
 
 def literalToRegex (s : String) : String :=
@@ -164,6 +174,15 @@ def compilePattern (name : String) (pattern : String) (env : CaptureEnv) :
   regex := regex ++ literalToRegex rem
   return (regex, captureDefs)
 
+def previewText (text : String) (limit : Nat := 800) : String :=
+  let trimmed := text.trimAscii.toString
+  if trimmed.isEmpty then
+    "<empty>"
+  else if trimmed.length <= limit then
+    trimmed
+  else
+    trimmed.take limit |>.toString ++ "\n... <truncated>"
+
 def runOrdered (name : String) (text : String) (checks : Array String) :
     Except String Unit := do
   let mut rem := normalizeLESymbols text
@@ -176,7 +195,7 @@ def runOrdered (name : String) (text : String) (checks : Array String) :
       | .ok r => pure r
       | .error e => throw s!"[{name}] invalid CHECK regex at index {idx + 1}: {repr e}\nPattern: {check}"
     let some caps := regex.capture rem
-      | throw s!"[{name}] missing ordered fragment at CHECK #{idx + 1}:\n{check}"
+      | throw s!"[{name}] CHECK #{idx + 1} failed.\nExpected:\n{check}\n\nGot remaining output:\n{previewText rem}"
     let some whole := caps.get 0
       | throw s!"[{name}] internal error: missing whole-match capture."
     let wholeTxt := whole.copy
@@ -203,7 +222,7 @@ def runAbsent (name : String) (text : String) (checks : Array String) (env : Cap
       | .ok r => pure r
       | .error e => throw s!"[{name}] invalid CHECK-NOT regex at index {idx + 1}: {repr e}\nPattern: {check}"
     if regex.test text then
-      throw s!"[{name}] forbidden fragment present at CHECK-NOT #{idx + 1}:\n{check}"
+      throw s!"[{name}] CHECK-NOT #{idx + 1} failed.\nForbidden pattern:\n{check}\n\nGot output:\n{previewText text}"
 
 def runExact (name : String) (actual : String) (expected? : Option String) : Except String Unit := do
   match expected? with
@@ -267,6 +286,25 @@ def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
     let stderrResult := runMatcher s!"{pyPathStr} (stderr)" out.stderr spec.checkErr spec.checkErrNot spec.checkErrExact
     return stderrResult
 
+def defaultCasesDir : System.FilePath :=
+  System.FilePath.mk "PyAstLeanTest/PyAstLeanCheck/Cases"
+
+def resolveCaseArg (arg : String) : IO (Except String System.FilePath) := do
+  let direct := System.FilePath.mk arg
+  if ← direct.pathExists then
+    return .ok direct
+  let underCases := defaultCasesDir / arg
+  if ← underCases.pathExists then
+    return .ok underCases
+  let withPy :=
+    if arg.endsWith ".py" then
+      underCases
+    else
+      defaultCasesDir / s!"{arg}.py"
+  if ← withPy.pathExists then
+    return .ok withPy
+  return .error s!"No such test case: {arg}"
+
 def listCaseFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
   let out ← IO.Process.output {
     cmd := "bash"
@@ -281,22 +319,54 @@ def listCaseFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
     let trimmed := line.trimAscii.toString
     if trimmed.isEmpty then acc else acc.push (System.FilePath.mk trimmed))
 
-def runPyAstLeanCheckSuite : IO Unit := do
-  let cases ← listCaseFiles (System.FilePath.mk "PyAstLeanTest/PyAstLeanCheck/Cases")
+def runCases (cases : Array System.FilePath) : IO Unit := do
   if cases.isEmpty then
     throw <| IO.userError "PyLeanCheck: no test cases found."
   let mut failures : Array String := #[]
   for casePath in cases do
-    match (← runOneCase casePath) with
+    -- Timer
+    let startTime ← IO.monoMsNow
+    let caseOut ← runOneCase casePath
+    let endTime ← IO.monoMsNow
+    let duration := endTime - startTime
+    match caseOut with
     | .ok _ =>
-      IO.println s!"[PyLeanCheck] PASS {casePath}"
+      IO.println s!"[PyLeanCheck] PASS {casePath} ({duration} ms)"
     | .error err =>
-      failures := failures.push s!"[PyLeanCheck] FAIL {err}"
+      failures := failures.push s!"[PyLeanCheck] FAIL {err} ({duration} ms)"
   if failures.isEmpty then
-    IO.println s!"[PyLeanCheck] {cases.size} cases passed."
+    IO.println s!"[PyLeanCheck] {cases.size} / {cases.size} cases passed."
   else
+    IO.println s!"[PyLeanCheck] {failures.size} / {cases.size} cases failed."
     throw <| IO.userError (String.intercalate "\n\n" failures.toList)
 
-#eval runPyAstLeanCheckSuite
+def runPALCSuite : IO Unit := do
+  let cases ← listCaseFiles defaultCasesDir
+  runCases cases
+
+def printUsage : IO Unit := do
+  IO.println "PyAstLeanCheck (PALC) - Testing framework for Python to Lean translation"
+  IO.println "Usage:"
+  IO.println "  lake exe palc"
+  IO.println "  lake exe palc <case>"
+  IO.println "  lake exe palc <case1> <case2> ..."
+  IO.println ""
+
+def runPALCMain (args : List String) : IO UInt32 := do
+  if args.any (fun arg => arg == "-h" || arg == "--help") then
+    printUsage
+    return 0
+  if args.isEmpty then
+    runPALCSuite
+    return 0
+  let mut cases : Array System.FilePath := #[]
+  for arg in args do
+    match ← resolveCaseArg arg with
+    | .ok path => cases := cases.push path
+    | .error err =>
+        IO.eprintln err
+        return 1
+  runCases cases
+  return 0
 
 end PyAstLeanTest
