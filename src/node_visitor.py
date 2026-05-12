@@ -1,8 +1,4 @@
 import ast
-import json
-from pathlib import Path
-import subprocess
-import sys
 
 FUNCTION_DEF_SCHEMA = {
     "node_type": "FunctionDef",
