@@ -256,7 +256,7 @@ def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
     | .error err => return .error err
   let out ← IO.Process.output {
     cmd := "python3"
-    args := #[ "src/py2lean.py", pyPathStr, spec.target ]
+    args := #[ "src/py2lean.py", pyPathStr, "--target", spec.target ]
   }
   if out.exitCode != spec.exitCode then
     return .error s!"{pyPathStr}: expected exit {spec.exitCode}, got {out.exitCode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"

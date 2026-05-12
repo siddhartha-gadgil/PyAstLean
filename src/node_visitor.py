@@ -21,6 +21,15 @@ FUNCTION_DEF_SCHEMA = {
 }
 
 class ASTToJsonLeanVisitorBase:
+    def visit_statements(self, statements):
+        """Translate a statement list, skipping declaration-only annotations."""
+        result = []
+        for stmt in statements:
+            if isinstance(stmt, ast.AnnAssign) and stmt.value is None:
+                continue
+            result.append(self.visit(stmt))
+        return result
+
     def visit(self, node):
         """
         The dynamic dispatcher. Routes an AST node to its specific visit_X method.
@@ -224,12 +233,12 @@ class ASTToJsonLeanVisitorBase:
         """Translates ast.Module to a JSON IR node."""
         return {
             "node_type": "Module",
-            "body": [self.visit(stmt) for stmt in node.body]
+            "body": self.visit_statements(node.body)
         }
 
     def visit_FunctionDef(self, node):
         """Translates ast.FunctionDef to a JSON IR node."""
-        body_json = [self.visit(stmt) for stmt in node.body]
+        body_json = self.visit_statements(node.body)
         return {
             "node_type": "FunctionDef",
             "name": node.name,
@@ -322,8 +331,8 @@ class ASTToJsonLeanVisitorBase:
             "node_type": "For",
             "target": self.visit(node.target),
             "iter": self.visit(node.iter),
-            "body": [self.visit(stmt) for stmt in node.body],
-            "orelse": [self.visit(stmt) for stmt in node.orelse]
+            "body": self.visit_statements(node.body),
+            "orelse": self.visit_statements(node.orelse)
         }
 
     def visit_If(self, node):
@@ -331,8 +340,8 @@ class ASTToJsonLeanVisitorBase:
         return {
             "node_type": "If",
             "test": self.visit(node.test),
-            "body": [self.visit(stmt) for stmt in node.body],
-            "orelse": [self.visit(stmt) for stmt in node.orelse]
+            "body": self.visit_statements(node.body),
+            "orelse": self.visit_statements(node.orelse)
         }
 
     def visit_While(self, node):
@@ -340,8 +349,8 @@ class ASTToJsonLeanVisitorBase:
         return {
             "node_type": "While",
             "test": self.visit(node.test),
-            "body": [self.visit(stmt) for stmt in node.body],
-            "orelse": [self.visit(stmt) for stmt in node.orelse]
+            "body": self.visit_statements(node.body),
+            "orelse": self.visit_statements(node.orelse)
         }
 
     def visit_Return(self, node):
