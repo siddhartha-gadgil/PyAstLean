@@ -152,6 +152,18 @@ class ASTToJsonLeanVisitorBase:
         return {
             "node_type": "Pass"
         }
+
+    def visit_Break(self, node):
+        """Translates ast.Break to a JSON IR node."""
+        return {
+            "node_type": "Break"
+        }
+
+    def visit_Continue(self, node):
+        """Translates ast.Continue to a JSON IR node."""
+        return {
+            "node_type": "Continue"
+        }
     
     def visit_Name(self, node):
         """Translates ast.Name (e.g., variable names) to a JSON IR node."""

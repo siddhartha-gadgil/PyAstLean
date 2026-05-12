@@ -25,6 +25,20 @@
 # CHECK: count := count +ₚ (1 : Int)
 # CHECK: j := j -ₚ (1 : Int)
 # CHECK: return count
+# CHECK: def breakable_loop := fun n ↦
+# CHECK: Id.run
+# CHECK: let mut total := (0 : Int)
+# CHECK: for i in PyAstLean.pyRange n do
+# CHECK: if i == (5 : Int) then 
+# CHECK: break
+# CHECK: total := total +ₚ i
+# CHECK: let mut j := (0 : Int)
+# CHECK: while j < n do
+# CHECK: if j <= (3 : Int) then 
+# CHECK: continue
+# CHECK: total := total +ₚ j
+# CHECK: j := j +ₚ (1 : Int)
+# CHECK: return total)
 # PYASTLEANCHECK END
 
 def nested_loops(n):
@@ -51,3 +65,20 @@ def while_in_for(n):
             count += 1
             j -= 1
     return count
+
+def breakable_loop(n):
+    total = 0
+    for i in range(n):
+        if i == 5:
+            break
+        total += i
+    j = 0
+    while j < n:
+        if j <= 3:
+            continue
+        total += j
+        j += 1
+ 
+    return total
+
+

@@ -179,6 +179,24 @@ def passSyntax : (kind : SyntaxNodeKind) → Json →
         `(doElem| let _ := ())
     | _, _ => throwError s!"Unsupported syntax category for Pass node"
 
+@[pygen "Continue"]
+def continueSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `command, _ => do
+        return ⟨mkNullNode #[]⟩
+    | `doElem, _ => do
+        `(doElem| continue)
+    | _, _ => throwError s!"Unsupported syntax category for Continue node"
+
+@[pygen "Break"]
+def breakSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `command, _ => do
+        return ⟨mkNullNode #[]⟩
+    | `doElem, _ => do
+        `(doElem| break)
+    | _, _ => throwError s!"Unsupported syntax category for Break node"
+
 @[pygen "While"]
 def whileSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -266,8 +284,10 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         if orelseStxArray.isEmpty then
           `(doElem| if $testStx then
               $[$bodyStxArray:doElem]*
+          -- add `else pure ()` for monadic
             else
-              pure ())
+              pure ()
+          )
         else
           `(doElem| if $testStx then
               $[$bodyStxArray:doElem]*
