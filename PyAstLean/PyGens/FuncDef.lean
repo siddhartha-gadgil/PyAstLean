@@ -322,6 +322,36 @@ def splitList : List Json -> PygenM Json
     let newJson := first.mergeObj (Json.mkObj [("node_type", newNodeType), ("rest", toJson rest)])
     return newJson
 
+def pureFunctionBodySyntax (bodyElems : Array Json) : PygenM (TSyntax `term) := do
+  let spl ← splitList bodyElems.toList
+  withoutCheck do
+    getCode spl `term
+
+def monadicFunctionBodySyntax (bodyElems : Array Json) : PygenM (Array (TSyntax `doElem)) := do
+  let mut bodyStxArray := #[]
+  for elem in bodyElems do
+    let elemStx ← withoutCheck do
+      getCode elem `doElem
+    bodyStxArray := bodyStxArray.push elemStx
+  return bodyStxArray
+
+def functionArgIdents (json : Json) : PygenM (Array (TSyntax `ident)) := do
+  let .ok args := json.getObjVal? "args" | throwError
+    s!"FuncDef node does not have an 'args' field or it is not a JSON value: {json}"
+  let .ok argsArray := args.getObjValAs? (Array Json) "args" | throwError
+    s!"FuncDef args does not have an 'args' field or it is not a JSON value: {args}"
+  let mut argIdents := #[]
+  for arg in argsArray do
+    let .ok argName := arg.getObjValAs? String "arg" | throwError
+      s!"FuncDef argument does not have an 'arg' field or it is not a string: {arg}"
+    argIdents := argIdents.push (mkIdent argName.toName)
+  return argIdents
+
+def functionBodyElems (json : Json) : PygenM (Array Json) := do
+  let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
+    s!"FuncDef node does not have a 'body' field or it is not a JSON value: {json}"
+  return bodyElems
+
 @[pygen "FunctionDef"]
 def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -329,34 +359,16 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         let .ok name := json.getObjValAs? String "name" | throwError
           s!"FuncDef node does not have a 'name' field or it is not a string: {json}"
         let nameIdent := mkIdent name.toName
-        let .ok args := json.getObjVal? "args" | throwError
-          s!"FuncDef node does not have an 'args' field or it is not a JSON value: {json}"
-        let .ok argsArray := args.getObjValAs? (Array Json) "args" | throwError
-          s!"FuncDef args does not have an 'args' field or it is not a JSON value: {args}"
-        let mut argStrs := #[]
-        for arg in argsArray do
-          let .ok argName := arg.getObjValAs? String "arg" | throwError
-            s!"FuncDef argument does not have an 'arg' field or it is not a string: {arg}"
-          argStrs := argStrs.push argName
-        let argIdents := argStrs.map (fun argName => mkIdent argName.toName)
-        let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
-          s!"FuncDef node does not have a 'body' field or it is not a JSON value: {json}"
-        let mut bodyStxArray := #[]
+        let argIdents ← functionArgIdents json
+        let bodyElems ← functionBodyElems json
         try
           -- Attempt to generate pure code by treating the body as a single unit and generating syntax for it directly, which will allow us to generate non-monadic code if the body is simple enough (e.g., a single return statement). If this fails, we will fall back to generating monadic code by generating syntax for each element of the body separately.
-          let spl ← splitList bodyElems.toList
-          let bodyStx ← withoutCheck do
-              getCode spl `term
+          let bodyStx ← pureFunctionBodySyntax bodyElems
           let t ← `(def $nameIdent := fun $argIdents* ↦ $bodyStx)
           return t
         catch e =>
           IO.eprintln s!"Could not generate pure function: {← e.toMessageData.toString}"
-        for elem in bodyElems do
-            let elemStx ← withoutCheck do
-                getCode elem `doElem
-            bodyStxArray := bodyStxArray.push elemStx
-            -- IO.eprintln s!"Generated syntax for function body element"  -- Debugging output
-            -- IO.eprintln s!"Variables: {(← get).varNames.toList}"  -- Debugging output
+        let bodyStxArray ← monadicFunctionBodySyntax bodyElems
         let idRunIdent := mkIdent ``Id.run
         if argIdents.isEmpty then
           `(def $nameIdent := $idRunIdent do
@@ -366,6 +378,18 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
               $[$bodyStxArray:doElem]*)
           -- IO.eprintln s!"Generated (monadic) syntax for FunctionDef node: \n{← PrettyPrinter.ppCommand cmd}" -- Debugging output
           return cmd
+    | `term, json => do
+        let argIdents ← functionArgIdents json
+        let bodyElems ← functionBodyElems json
+        try
+          let bodyStx ← pureFunctionBodySyntax bodyElems
+          `(fun $argIdents* ↦ $bodyStx)
+        catch e =>
+          IO.eprintln s!"Could not generate pure function term: {← e.toMessageData.toString}"
+          let bodyStxArray ← monadicFunctionBodySyntax bodyElems
+          let idRunIdent := mkIdent ``Id.run
+          `(fun $argIdents* ↦ $idRunIdent do
+              $[$bodyStxArray:doElem]*)
     | kind, _ => throwError s!"Unsupported syntax category `{kind}` for FuncDef node"
 
 @[pygen "Head_Assign"]
@@ -405,6 +429,40 @@ def annAssignHeadSyntax : (kind : SyntaxNodeKind) → Json →
             let json := targetJson.mergeObj json
             assignHeadSyntax `term json
     | _, _ => throwError s!"Unsupported syntax category for Head_AnnAssign node"
+
+@[pygen "Head_Pass"]
+def passHeadSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `term, json => do
+        let .ok rest := json.getObjValAs? (List Json) "rest" | throwError
+          s!"Pass node does not have a 'rest' field or it is not a JSON value: {json}"
+        let splitRest ← splitList rest
+        withoutCheck do
+          getCode splitRest `term
+    | _, _ => throwError s!"Unsupported syntax category for Head_Pass node"
+
+@[pygen "Head_If"]
+def ifHeadSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `term, json => do
+        let .ok testJson := json.getObjValAs? Json "test" | throwError
+          s!"If node does not have a 'test' field or it is not a JSON value: {json}"
+        let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
+          s!"If node does not have a 'body' field or it is not a JSON array: {json}"
+        let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
+          s!"If node does not have an 'orelse' field or it is not a JSON array: {json}"
+        let .ok rest := json.getObjValAs? (List Json) "rest" | throwError
+          s!"If node does not have a 'rest' field or it is not a JSON value: {json}"
+        let testStx ← getCode testJson `term
+        let thenBranch ← withoutCheck do
+          let splitThen ← splitList (bodyElems.toList ++ rest)
+          getCode splitThen `term
+        let elseTail := if orelseElems.isEmpty then rest else orelseElems.toList ++ rest
+        let elseBranch ← withoutCheck do
+          let splitElse ← splitList elseTail
+          getCode splitElse `term
+        `(if $testStx then $thenBranch else $elseBranch)
+    | _, _ => throwError s!"Unsupported syntax category for Head_If node"
 
 @[pygen "Head_Return"]
 def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
