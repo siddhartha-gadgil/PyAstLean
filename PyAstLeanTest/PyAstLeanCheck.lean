@@ -264,6 +264,43 @@ def runMatcher (name : String) (text : String) (check : Array String) (checkNot 
   runAbsent name text checkNot env
   runExact name text exact
 
+/-- Wrap generated Lean output in a minimal module so PALC can elaborate it. -/
+def wrappedGeneratedLean (target generated : String) : String :=
+  let body :=
+    if target == "command" then
+      generated.trimAscii.toString ++ "\n"
+    else
+      s!"#check {generated.trimAscii.toString}\n"
+  String.intercalate "\n"
+    [ "import PyAstLean"
+    , "open PyAstLean"
+    , "namespace PALCGenerated"
+    , ""
+    , body
+    , "end PALCGenerated"
+    ]
+
+/-- Compile the generated Lean code in a scratch module so passing PALC cases also elaborate. -/
+def compileGeneratedLean (pyPath : System.FilePath) (target generated : String) :
+    IO (Except String Unit) := do
+  let stamp ← IO.monoMsNow
+  let tmpPath := System.FilePath.mk s!"/tmp/pyastlean_palc_{stamp}.lean"
+  let wrapped := wrappedGeneratedLean target generated
+  IO.FS.writeFile tmpPath wrapped
+  let out ← IO.Process.output {
+    cmd := "lake"
+    args := #["env", "lean", tmpPath.toString]
+  }
+  try
+    IO.FS.removeFile tmpPath
+  catch _ =>
+    pure ()
+  if out.exitCode == 0 then
+    return .ok ()
+  else
+    return .error
+      s!"{pyPath}: generated Lean failed to compile.\nGENERATED:\n{wrapped}\n\nSTDERR:\n{out.stderr}\nSTDOUT:\n{out.stdout}"
+
 def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
   let pyPathStr := pyPath.toString
   if !pyPathStr.endsWith ".py" then
@@ -284,7 +321,13 @@ def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
   | .error err => return .error err
   | .ok _ =>
     let stderrResult := runMatcher s!"{pyPathStr} (stderr)" out.stderr spec.checkErr spec.checkErrNot spec.checkErrExact
-    return stderrResult
+    match stderrResult with
+    | .error err => return .error err
+    | .ok _ =>
+      if spec.exitCode == 0 then
+        compileGeneratedLean pyPath spec.target out.stdout
+      else
+        return .ok ()
 
 def defaultCasesDir : System.FilePath :=
   System.FilePath.mk "PyAstLeanTest/PyAstLeanCheck/Cases"

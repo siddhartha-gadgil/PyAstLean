@@ -71,8 +71,6 @@ class LeanBackendClient:
         return self.cwd / ".lake" / "build" / "bin" / "py2lean"
 
     def _ensure_binary(self):
-        if self.binary_path.exists():
-            return
         logger.debug("Building py2lean backend binary before starting server.")
         build = subprocess.run(
             ["lake", "build", "py2lean"],
@@ -84,9 +82,7 @@ class LeanBackendClient:
             raise RuntimeError(build.stderr.strip() or build.stdout.strip() or "lake build py2lean failed")
 
     def _command(self):
-        if self.binary_path.exists():
-            return ["lake", "env", str(self.binary_path), "--server"]
-        return ["lake", "exe", "py2lean", "--", "--server"]
+        return ["lake", "env", str(self.binary_path), "--server"]
 
     def _drain_stderr(self):
         assert self.proc is not None and self.proc.stderr is not None
