@@ -27,6 +27,12 @@ That wrapper is responsible for:
 5. Reuses one persistent Lean backend process for the lifetime of the Python process, so
    module-level translation does not restart Lean for every top-level statement.
 
+
+To see the intermediate steps in the code, run `--verbose` flag as shown below.
+```bash
+python3 src/py2lean.py example_scripts/commands/assignment_arith.py --target command --verbose
+```
+
 ### Low-level Lean backend
 
 The executable defined by [py2lean.lean](/home/anirudhgupta/PyAstLean/py2lean.lean:1) is the JSON backend.

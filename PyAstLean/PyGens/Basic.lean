@@ -162,7 +162,7 @@ infix:65 " -ₚ " => PyHSub.hSub
 instance (priority:= low) {α β γ} [HSub α β γ] : PyHSub α β γ where
   hSub := HSub.hSub
 
-@[default_instance]
+
 instance (priority := high) : PyHSub Nat Nat Int where
   hSub := fun a b => (a :  Int) - (b : Int)
 
@@ -180,12 +180,12 @@ infix:70 " *ₚ " => PyHMul.hMul
 instance {α β γ} [HMul α β γ] : PyHMul α β γ where
   hMul := HMul.hMul
 
-@[default_instance]
-instance (priority := high) : PyHMul String Nat String where
+
+instance : PyHMul String Nat String where
   hMul := fun s n => String.intercalate "" (List.replicate n s)
 
-@[default_instance]
-instance (priority := high) : PyHMul String Int String where
+
+instance : PyHMul String Int String where
   hMul := fun s n => if n < 0 then
                         ""
                      else
@@ -199,6 +199,27 @@ instance (priority := high) : PyHMul Rat Rat Rat where
 class PyHPow (α β : Type) (γ : outParam Type) where
   hPow : α → β → γ
 infix:80 " ^ₚ " => PyHPow.hPow
+
+class PyModulo (α β : Type) (γ : outParam Type) where
+  hMod : α → β → γ
+infix:70 " %ₚ " => PyModulo.hMod
+
+def pyMod (a b : Int) : Int :=
+  if b == 0 then
+    a
+  else
+    let r := a % b
+    if (r < 0 && b > 0) || (r > 0 && b < 0) then
+      r + b
+    else
+      r
+
+@[default_instance]
+instance (priority := high) : PyModulo Int Int Int where
+  hMod := pyMod
+
+instance : PyModulo Nat Nat Nat where
+  hMod := fun a b => a % b
 
 @[default_instance]
 instance {α β γ} [HPow α β γ] : PyHPow α β γ where
@@ -225,11 +246,11 @@ infix:70 " /ₚ " => PyHDiv.hDiv
 instance {α β γ} [HDiv α β γ] : PyHDiv α β γ where
   hDiv := HDiv.hDiv
 
-@[default_instance]
+
 instance (priority := high) : PyHDiv Int Int Rat where
   hDiv := fun a b => (a : Rat) / (b : Rat)
 
-@[default_instance]
+
 instance (priority := high) : PyHDiv Nat Nat Rat where
   hDiv := fun a b => (a : Rat) / (b : Rat)
 
@@ -237,9 +258,15 @@ instance (priority := high) : PyHDiv Nat Nat Rat where
 instance (priority := high) : PyHDiv Rat Rat Rat where
   hDiv := fun a b => (a : Rat) / (b : Rat)
 
-def pyRange (stop : Int) : List Int :=
-  (List.range stop.toNat).map Int.ofNat
+def pyRange (stop : Int) (start : Int := 0) (step : Int := 1) : List Int := do
+  if step > 0 then
+    List.map (fun i => start + i) (List.range' 0 ((stop-start)/step + (stop-start)%step).toNat step.toNat)
+  else if step < 0 then
+    List.map (fun i => start - i) (List.range' 0 ((start-stop)/(-step) + (start-stop)%(-step)).toNat (-step).toNat)
+  else
+    []
 
+-- #eval pyRange 10 (17:Int) (-2)
 @[pygen "BinOp"]
 def binOpSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -259,6 +286,7 @@ def binOpSyntax : (kind : SyntaxNodeKind) → Json →
     | "mul" => `($leftCode *ₚ $rightCode)
     | "div" => `($leftCode /ₚ $rightCode)
     | "pow" => `($leftCode ^ₚ $rightCode)
+    | "mod" => `($leftCode %ₚ $rightCode)
     | _ => throwError s!"Unsupported binary operator: {op}"
   | _, _ => throwError s!"Unsupported syntax category for BinOp node"
 

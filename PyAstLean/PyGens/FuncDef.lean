@@ -286,6 +286,25 @@ def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
         return valueStx
     | _, _ => throwError s!"Unsupported syntax category for Head_Return node"
 
+@[pygen "Lambda"]
+def lambdaStx: (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+    | `term, json => do
+        let .ok _ := json.getObjValAs? Json "args" | throwError
+          s!"Lambda node does not have an 'args' field or it is not a JSON value: {json}"
+        let .ok body := json.getObjValAs? Json "body" | throwError
+          s!"Lambda node does not have a 'body' field or it is not a JSON value: {json}"
+        let argInfos ← functionArgInfos json
+        let bodyStx ← getCode body `term
+        let mut result := bodyStx
+        for (argIdent, ty?) in argInfos.toList.reverse do
+          result ← match ty? with
+            | some ty => `(fun ($argIdent : $ty) ↦ $result)
+            | none => `(fun $argIdent ↦ $result)
+        pure result
+
+    | _, _ => throwError s!"Unsupported syntax category for Lambda node"
+
 def f := fun n =>
       let x := n -ₚ 1
       let y := x *ₚ 2

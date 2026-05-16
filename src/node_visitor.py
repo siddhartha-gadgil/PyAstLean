@@ -9,6 +9,7 @@ BINOP_MAP = {
     ast.Pow: "pow",
     ast.Div: "div",
     ast.BitOr: "bitor",
+    ast.Mod : "mod",
 }
 
 BOOLOP_MAP = {
@@ -236,6 +237,13 @@ class ASTToJsonLeanVisitorBase:
         func_json = self.visit(node.func)
         args_json = [self.visit(arg) for arg in node.args]
         keywords_json = {kw.arg: self.visit(kw.value) for kw in node.keywords}
+        if func_json["id"] == "range" :
+            return {
+                "node_type": "Range",
+                "func": func_json,
+                "args": args_json,
+                "keywords": keywords_json
+            }
         return {
             "node_type": "Call",
             "func": func_json,
@@ -327,7 +335,13 @@ class ASTToJsonLeanVisitorBase:
             "type_comment": node.type_comment,
             "type_params": [self.visit(type_param) for type_param in getattr(node, "type_params", [])]
         }
-
+    def visit_Lambda(self, node):
+        """Translates ast.Lambda to a JSON IR node."""
+        return {
+            "node_type": "Lambda",
+            "args": self.visit(node.args),
+            "body": self.visit(node.body)
+        }
     def visit_arguments(self, node):
         """Translates ast.arguments to a JSON IR node."""
         return {
@@ -447,6 +461,24 @@ class ASTToJsonLeanVisitorBase:
             "node_type": "Raise",
             "exc": None if node.exc is None else self.visit(node.exc),
             "cause": None if node.cause is None else self.visit(node.cause),
+        }
+    
+    def visit_ListComp(self, node):
+        """Translates ast.ListComp (list comprehensions) to a JSON IR node."""
+        return {
+            "node_type": "ListComp",
+            "elt": self.visit(node.elt),
+            "generators": [self.visit(gen) for gen in node.generators]
+        }
+    
+    def visit_comprehension(self, node):
+        """Translates ast.comprehension (the generator part of comprehensions) to a JSON IR node."""
+        return {
+            "node_type": "comprehension",
+            "target": self.visit(node.target),
+            "iter": self.visit(node.iter),
+            "ifs": [self.visit(if_cond) for if_cond in node.ifs],
+            "is_async": node.is_async
         }
 
 if __name__ == "__main__":
