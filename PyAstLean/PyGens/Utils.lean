@@ -105,6 +105,7 @@ partial def statementListDefinitelyReturns : List Json → Bool
 partial def statementDefinitelyReturns (stmt : Json) : Bool :=
   match jsonNodeType? stmt with
   | some "Return" => true
+  | some "Raise" => true
   | some "If" =>
       match stmt.getObjValAs? (Array Json) "body", stmt.getObjValAs? (Array Json) "orelse" with
       | .ok bodyElems, .ok orelseElems =>

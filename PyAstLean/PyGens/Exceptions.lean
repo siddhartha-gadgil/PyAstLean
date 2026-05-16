@@ -109,7 +109,6 @@ partial def exceptHandlersDoElemSyntax (caughtIdent : TSyntax `ident) (handlers 
       if let some handlerName := handlerName? then
         bodyElems := bodyElems.push (← `(doElem| let $(mkIdent handlerName.toName) := $caughtIdent))
       bodyElems := bodyElems ++ (← tryBranchBodySyntax bodyElemsJson)
-      let bodyBlock ← sequenceDoElems bodyElems (← noopDoElemSyntax)
       let nextHandler ← exceptHandlersDoElemSyntax caughtIdent restHandlers
       if bodyElems.isEmpty then
         let noop ← noopDoElemSyntax
@@ -118,6 +117,8 @@ partial def exceptHandlersDoElemSyntax (caughtIdent : TSyntax `ident) (handlers 
           else
             $nextHandler:doElem)
       else
+        let bodyBlock ← `(doElem| do
+            $[$bodyElems:doElem]*)
         `(doElem| if $cond then
             $bodyBlock:doElem
           else

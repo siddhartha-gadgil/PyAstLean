@@ -4,6 +4,18 @@ open Lean Meta Elab Term Qq Std
 
 namespace PyAstLean
 
+/-- Simple returned expressions can stay unparenthesized; more complex or effectful ones
+keep parentheses so Lean parses multiline `return` expressions reliably. -/
+def shouldParenthesizeReturnValue (value : Json) : Bool :=
+  if jsonUsesExceptionEffect value then
+    true
+  else
+    match jsonNodeType? value with
+    | some "Name" => false
+    | some "Constant" => false
+    | some "Attribute" => false
+    | _ => true
+
 @[pygen "Assign"]
 def assignSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -73,7 +85,7 @@ def returnSyntax : (kind : SyntaxNodeKind) → Json →
           s!"Return node does not have a 'value' field or it is not a JSON value: {json}"
         match value with
         | .null =>
-            `(doElem| return ())
+            `(doElem| return (()))
         | _ =>
             let valueStx ← getCode value `term
             let retValue ←
@@ -81,7 +93,10 @@ def returnSyntax : (kind : SyntaxNodeKind) → Json →
                 `((← $valueStx))
               else
                 pure valueStx
-            `(doElem| return $retValue)
+            if shouldParenthesizeReturnValue value then
+              `(doElem| return ($retValue))
+            else
+              `(doElem| return $retValue)
     | _, _ => throwError s!"Unsupported syntax category for Return node"
 
 end PyAstLean
