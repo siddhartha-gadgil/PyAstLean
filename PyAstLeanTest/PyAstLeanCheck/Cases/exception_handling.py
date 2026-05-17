@@ -4,12 +4,12 @@
 # CHECK: if x < (0 : Int) then
 # CHECK: throw (PyAstLean.PyException.Raise "ValueError"
 # CHECK: ToString.toString "negative")
-# CHECK: return (
+# CHECK: return
 # CHECK: String.append
 # CHECK: PyAstLean.PyExcept _)
 # CHECK: def call_fail := fun x ↦
 # CHECK: let mut y := (← fail x)
-# CHECK: return (y)
+# CHECK: return y
 # CHECK: PyAstLean.PyExcept _)
 # CHECK: def safe := fun n ↦
 # CHECK: try
@@ -17,7 +17,7 @@
 # CHECK: catch caught =>
 # CHECK: if (caught).OfKind == "ValueError" then
 # CHECK: let err := caught
-# CHECK: return (
+# CHECK: return
 # CHECK: String.append
 # CHECK: PyAstLean.PyExcept _)
 # CHECK: def simple_catch :=
@@ -28,7 +28,7 @@
 # CHECK: Caught exception:
 # CHECK: def fixed_catch :=
 # CHECK: if (caught).OfKind == "ZeroDivisionError" then
-# CHECK: return (
+# CHECK: return
 # CHECK: String.append
 # CHECK: Caught ZeroDivisionError:
 # CHECK: Caught other exception:
@@ -45,7 +45,7 @@
 # CHECK: def raise_error := fun num ↦
 # CHECK: throw (PyAstLean.PyException.Raise "ValueError"
 # CHECK: throw (PyAstLean.PyException.Raise "ZeroDivisionError"
-# CHECK: return (
+# CHECK: return
 # CHECK: String.append (String.append "" "Number is ")
 # CHECK: def catch_loop := fun num ↦
 # CHECK: for i in PyAstLean.pyRange num do

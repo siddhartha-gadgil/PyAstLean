@@ -19,22 +19,22 @@
 # CHECK: Id.run
 # CHECK: let mut res := x *ₚ y
 # CHECK: res := res +ₚ z
-# CHECK: return (res))
+# CHECK: return res
 # PYASTLEANCHECK END
 
-def add(a: Any, b: Any) -> Any:
+def add(a, b):
     return a + b
 
-def call_add(n: Any) -> Any:
+def call_add(n):
     return add(n, 1)
 
-def keyword_call(n: Any) -> Any:
+def keyword_call(n):
     return add(a=n, b=2)
 
-def many_args(a: Any, b: Any, c: Any, d: Any, e: Any) -> Any:
+def many_args(a, b, c, d, e):
     return a + b + c + d + e
 
-def complex_func(x: Any, y: Any, z: Any) -> Any:
+def complex_func(x, y, z):
     res = x * y
     res += z
     return res
