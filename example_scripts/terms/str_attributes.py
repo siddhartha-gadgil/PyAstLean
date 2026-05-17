@@ -1,0 +1,7 @@
+l = "gh yy uu".split()
+t = " ".join(l)
+s = t.strip('g')
+b1 = s.startswith('h')
+b2 = s.endswith('u')
+s1 = s.upper()   
+s2 = s.lower()

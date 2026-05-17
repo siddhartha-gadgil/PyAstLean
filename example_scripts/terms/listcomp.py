@@ -1,2 +1,1 @@
-l = [x*2 for x in range(10) if x >= 5]
-t = [x*2 for x in l if x >= 15]
+l = [x*y for l in [[1,2,3],[4,5,6]] for x in l for y in l]

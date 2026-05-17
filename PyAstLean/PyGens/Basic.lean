@@ -1,5 +1,6 @@
 import Mathlib
 import PyAstLean.Codegen
+import PyAstLean.PyGens.Attributes
 open Lean Meta Elab Term Qq Std
 
 namespace PyAstLean
@@ -473,6 +474,66 @@ def onePlusTwoNode := json% {
     }
   }
 
+-- @[pygen "Call"]
+-- def callSyntax : (kind : SyntaxNodeKind) → Json →
+--     PygenM (TSyntax kind)
+--   | `term, json => do
+--     let .ok funcJson := json.getObjValAs? Json "func" | throwError
+--       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
+--     let .ok argsJson := json.getObjValAs? Json "args" | throwError
+--       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
+--     let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+--       | .ok "Name", .ok funcName =>
+--           let mappedName ← leanName funcName.toName
+--           pure <| (mkIdent mappedName : TSyntax `term)
+--       | _, _ =>
+--           getCode funcJson `term
+--     let mut t ← `($funcCode)
+--     let argsCodes ← match argsJson with
+--       | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+--       | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+--     for argCode in argsCodes do
+--       t ←  `($t $argCode)
+--     let .ok keyWordsJson := json.getObjVal?  "keywords" | throwError
+--       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
+--     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
+--       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
+--     for (kwName, kwValueJson) in keyWordsMap.toList do
+--       let kwValueCode ← getCode kwValueJson `term
+--       let kwId := mkIdent kwName.toName
+--       t ← `($t ($kwId:ident := $kwValueCode))
+--     return t
+--   | `doElem, json => do
+--     let .ok funcJson := json.getObjValAs? Json "func" | throwError
+--       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
+--     let .ok argsJson := json.getObjValAs? Json "args" | throwError
+--       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
+--     let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+--       | .ok "Name", .ok funcName =>
+--           let mappedName ← leanName funcName.toName
+--           pure <| (mkIdent mappedName : TSyntax `term)
+--       | _, _ =>
+--           getCode funcJson `term
+--     let mut t ← `($funcCode)
+--     let argsCodes ← match argsJson with
+--       | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+--       | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+--     for argCode in argsCodes do
+--       t ← `($t $argCode)
+--     let .ok keyWordsJson := json.getObjVal? "keywords" | throwError
+--       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
+--     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
+--       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
+--     for (kwName, kwValueJson) in keyWordsMap.toList do
+--       let kwValueCode ← getCode kwValueJson `term
+--       let kwId := mkIdent kwName.toName
+--       t ← `($t ($kwId:ident := $kwValueCode))
+--     let callCode := t
+--     `(doElem| let _ := $callCode)
+--   | _, _ => throwError s!"Unsupported syntax category for Call node"
+
+-- The registry for mapping Python standard library methods to Lean functions.
+-- Add any future list or string methods here.
 @[pygen "Call"]
 def callSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -481,91 +542,128 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
     let .ok argsJson := json.getObjValAs? Json "args" | throwError
       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
+
+    let argsCodes ← match argsJson with
+      | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+      | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+
+    -- NEW: Array to hold ALL arguments for a flat application
+    let mut allArgs : Array (TSyntax `term) := #[]
+    let mut funcIdent : TSyntax `term ← `("")
+
+    -- 1. INTERCEPT METHOD CALLS
+    if funcJson.getObjValAs? String "node_type" == .ok "Attribute" then
+      let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
+        s!"Attribute node missing 'value' field: {funcJson}"
+      let .ok attr := funcJson.getObjValAs? String "attr" | throwError
+        s!"Attribute node missing 'attr' field: {funcJson}"
+
+      let valCode ← getCode valueJson `term
+
+      -- Push the base object as the very first argument
+      allArgs := allArgs.push valCode
+
+      match pythonMethodMap attr with
+      | some funcName =>
+          funcIdent := mkIdent funcName
+      | none =>
+          throwError s!"Unsupported Python method '{attr}' encountered in Call node."
+
+    -- 2. STANDARD FUNCTION CALLS
+    else
+      funcIdent ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+        | .ok "Name", .ok funcName =>
+            let mappedName ← leanName funcName.toName
+            pure <| (mkIdent mappedName : TSyntax `term)
+        | _, _ =>
+            getCode funcJson `term
+
+    -- 3. APPLY POSITIONAL ARGUMENTS
+    for argCode in argsCodes do
+      allArgs := allArgs.push argCode
+
+    -- 4. APPLY KEYWORD ARGUMENTS
     let .ok keyWordsJson := json.getObjVal? "keywords" | throwError
       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
-    match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "attr" with
-    | .ok "Attribute", .ok "items" =>
-        unless keyWordsMap.isEmpty do
-          throwError "Dictionary items() calls do not support keyword arguments."
-        let argsArray ← match argsJson with
-          | .arr arr => pure arr
-          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-        unless argsArray.isEmpty do
-          throwError "Dictionary items() calls do not support positional arguments."
-        let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
-          s!"Attribute call is missing a 'value' field: {funcJson}"
-        let valueCode ← getCode valueJson `term
-        let toListIdent := mkIdent ``Std.HashMap.toList
-        `($toListIdent $valueCode)
-    | _, _ => do
-        let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
-          | .ok "Name", .ok funcName =>
-              let mappedName ← leanName funcName.toName
-              pure <| (mkIdent mappedName : TSyntax `term)
-          | _, _ =>
-              getCode funcJson `term
-        let mut t ← `($funcCode)
-        let argsCodes ← match argsJson with
-          | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
-          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-        for argCode in argsCodes do
-          t ←  `($t $argCode)
-        for (kwName, kwValueJson) in keyWordsMap.toList do
-          let kwValueCode ← getCode kwValueJson `term
-          let kwId := mkIdent kwName.toName
-          t ← `($t ($kwId:ident := $kwValueCode))
-        return t
+
+    -- 5. FLATTEN POSITIONAL CALL FIRST (Fixes the bracketing issue)
+    -- This generates `funcIdent arg1 arg2` cleanly
+    let mut t ← `($funcIdent $allArgs*)
+
+    -- 6. APPLY KEYWORD ARGUMENTS ITERATIVELY
+    -- Lean correctly parses `($id := $val)` here because it is in the context of an application
+    for (kwName, kwValueJson) in keyWordsMap.toList do
+      let kwValueCode ← getCode kwValueJson `term
+      let kwId := mkIdent kwName.toName
+      t ← `($t ($kwId:ident := $kwValueCode))
+    return t
   | `doElem, json => do
     let .ok funcJson := json.getObjValAs? Json "func" | throwError
       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
     let .ok argsJson := json.getObjValAs? Json "args" | throwError
       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
+
+    let argsCodes ← match argsJson with
+      | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+      | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+
+    let mut allArgs : Array (TSyntax `term) := #[]
+    let mut funcIdent : TSyntax `term ← `("")
+
+    -- 1. INTERCEPT METHOD CALLS
+    if funcJson.getObjValAs? String "node_type" == .ok "Attribute" then
+      let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
+        s!"Attribute node missing 'value' field: {funcJson}"
+      let .ok attr := funcJson.getObjValAs? String "attr" | throwError
+        s!"Attribute node missing 'attr' field: {funcJson}"
+
+      let valCode ← getCode valueJson `term
+
+      allArgs := allArgs.push valCode
+
+      match pythonMethodMap attr with
+      | some funcName =>
+          funcIdent := mkIdent funcName
+      | none =>
+          throwError s!"Unsupported Python method '{attr}' encountered in Call node."
+
+    -- 2. STANDARD FUNCTION CALLS
+    else
+      funcIdent ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+        | .ok "Name", .ok funcName =>
+            let mappedName ← leanName funcName.toName
+            pure <| (mkIdent mappedName : TSyntax `term)
+        | _, _ =>
+            getCode funcJson `term
+
+    -- 3. APPLY POSITIONAL ARGUMENTS
+    for argCode in argsCodes do
+      allArgs := allArgs.push argCode
+
+    -- 4. APPLY KEYWORD ARGUMENTS
     let .ok keyWordsJson := json.getObjVal? "keywords" | throwError
       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
-    match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "attr" with
-    | .ok "Attribute", .ok "append" =>
-        unless keyWordsMap.isEmpty do
-          throwError "append() calls do not support keyword arguments."
-        let argsArray ← match argsJson with
-          | .arr arr => pure arr
-          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-        let some argJson := argsArray[0]? | throwError "append() expects exactly one positional argument."
-        unless argsArray.size == 1 do
-          throwError "append() expects exactly one positional argument."
-        let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
-          s!"Attribute call is missing a 'value' field: {funcJson}"
-        let targetIdent ← getCode valueJson `ident
-        let argCode ← getCode argJson `term
-        `(doElem| $targetIdent:ident := $targetIdent ++ [$argCode])
-    | _, _ => do
-        let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
-          | .ok "Name", .ok funcName =>
-              let mappedName ← leanName funcName.toName
-              pure <| (mkIdent mappedName : TSyntax `term)
-          | _, _ =>
-              getCode funcJson `term
-        let mut t ← `($funcCode)
-        let argsCodes ← match argsJson with
-          | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
-          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-        for argCode in argsCodes do
-          t ← `($t $argCode)
-        for (kwName, kwValueJson) in keyWordsMap.toList do
-          let kwValueCode ← getCode kwValueJson `term
-          let kwId := mkIdent kwName.toName
-          t ← `($t ($kwId:ident := $kwValueCode))
-        let callCode := t
-        if basicJsonUsesExceptionEffect json then
-          `(doElem| let _ ← $callCode:term)
-        else
-          `(doElem| let _ := $callCode)
+
+    -- 5. FLATTEN POSITIONAL CALL FIRST (Fixes the bracketing issue)
+    -- This generates `funcIdent arg1 arg2` cleanly
+    let mut t ← `($funcIdent $allArgs*)
+
+    -- 6. APPLY KEYWORD ARGUMENTS ITERATIVELY
+    -- Lean correctly parses `($id := $val)` here because it is in the context of an application
+    for (kwName, kwValueJson) in keyWordsMap.toList do
+      let kwValueCode ← getCode kwValueJson `term
+      let kwId := mkIdent kwName.toName
+      t ← `($t ($kwId:ident := $kwValueCode))
+
+
+    -- 5. FLATTEN THE CALL
+    `(doElem| let _ := $t)
+
   | _, _ => throwError s!"Unsupported syntax category for Call node"
-
-
 
 @[pygen "Attribute"]
 def attributeSyntax : (kind : SyntaxNodeKind) → Json →
