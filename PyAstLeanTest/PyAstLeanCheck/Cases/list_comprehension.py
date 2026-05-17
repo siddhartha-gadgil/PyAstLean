@@ -12,9 +12,9 @@
 # CHECK: let (num, char) := _pair
 # CHECK: def lc_with_side_effects :=
 # CHECK: Id.run
-# CHECK: result := result ++ [x *ₚ x]
+# CHECK: result := PyAstLean.pyAppend result (x *ₚ x)
 # CHECK: def lc_with_dict :=
-# CHECK: Std.HashMap.toList d
+# CHECK: PyAstLean.pyItems d
 # CHECK: def lc_multi_list :=
 # CHECK: List.flatMap
 # PYASTLEANCHECK END

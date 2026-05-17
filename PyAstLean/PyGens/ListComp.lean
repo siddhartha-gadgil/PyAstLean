@@ -19,7 +19,7 @@ partial def freshListCompName (base : Name) (idx : Nat := 0) : PygenM Name := do
 
 /-- Build a lambda binder for a comprehension target. Simple tuple unpacking is lowered with an
 intermediate pair binding so later clauses can use the unpacked names. -/
-partial def listCompTargetLambda (targetJson : Json) (body : TSyntax `term) :
+def listCompTargetLambda (targetJson : Json) (body : TSyntax `term) :
     PygenM (TSyntax `term) := do
   match jsonNodeType? targetJson with
   | some "Name" =>
@@ -72,7 +72,7 @@ def comprehensionIterSyntax (compJson : Json) : PygenM (TSyntax `term) := do
     `(List.filter $predicateLambda $iterCode)
 
 /-- Recursively lower a Python list/generator comprehension through all generators. -/
-partial def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
+def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
     PygenM (TSyntax `term) := do
   match generators with
   | [] =>

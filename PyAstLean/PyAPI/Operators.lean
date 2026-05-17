@@ -1,0 +1,122 @@
+import Mathlib
+
+namespace PyAstLean
+
+class PyHAdd (α β : Type) (γ : outParam Type) where
+  hAdd : α → β → γ
+
+infix:65 " +ₚ " => PyHAdd.hAdd
+
+@[default_instance]
+instance {α β γ} [HAdd α β γ] : PyHAdd α β γ where
+  hAdd := HAdd.hAdd
+
+@[default_instance]
+instance (priority := high) : PyHAdd Rat Rat Rat where
+  hAdd := fun a b => (a : Rat) + (b : Rat)
+
+instance : PyHAdd String String String where
+  hAdd := String.append
+
+class PyHSub (α β : Type) (γ : outParam Type) where
+  hSub : α → β → γ
+
+infix:65 " -ₚ " => PyHSub.hSub
+
+@[default_instance]
+instance (priority := low) {α β γ} [HSub α β γ] : PyHSub α β γ where
+  hSub := HSub.hSub
+
+instance (priority := high) : PyHSub Nat Nat Int where
+  hSub := fun a b => (a : Int) - (b : Int)
+
+@[default_instance]
+instance (priority := high) : PyHSub Rat Int Rat where
+  hSub := fun a b => (a : Rat) - (b : Int)
+
+class PyHMul (α β : Type) (γ : outParam Type) where
+  hMul : α → β → γ
+
+infix:70 " *ₚ " => PyHMul.hMul
+
+@[default_instance]
+instance {α β γ} [HMul α β γ] : PyHMul α β γ where
+  hMul := HMul.hMul
+
+instance : PyHMul String Nat String where
+  hMul := fun s n => String.intercalate "" (List.replicate n s)
+
+instance : PyHMul String Int String where
+  hMul := fun s n =>
+    if n < 0 then
+      ""
+    else
+      String.intercalate "" (List.replicate n.toNat s)
+
+@[default_instance]
+instance (priority := high) : PyHMul Rat Rat Rat where
+  hMul := fun a b => (a : Rat) * (b : Rat)
+
+class PyHPow (α β : Type) (γ : outParam Type) where
+  hPow : α → β → γ
+
+infix:80 " ^ₚ " => PyHPow.hPow
+
+class PyModulo (α β : Type) (γ : outParam Type) where
+  hMod : α → β → γ
+
+infix:70 " %ₚ " => PyModulo.hMod
+
+def pyMod (a b : Int) : Int :=
+  if b == 0 then
+    a
+  else
+    let r := a % b
+    if (r < 0 && b > 0) || (r > 0 && b < 0) then
+      r + b
+    else
+      r
+
+@[default_instance]
+instance (priority := high) : PyModulo Int Int Int where
+  hMod := pyMod
+
+instance : PyModulo Nat Nat Nat where
+  hMod := fun a b => a % b
+
+@[default_instance]
+instance {α β γ} [HPow α β γ] : PyHPow α β γ where
+  hPow := HPow.hPow
+
+@[default_instance]
+instance (priority := high) {α β} [Pow α β] : PyHPow α β α where
+  hPow := Pow.pow
+
+@[default_instance]
+instance (priority := high) : PyHPow Rat Int Rat where
+  hPow := fun a b => (a : Rat) ^ (b : Int)
+
+@[default_instance]
+instance (priority := high) : Neg Rat where
+  neg := fun a => - (a : Rat)
+
+class PyHDiv (α β : Type) (γ : outParam Type) where
+  hDiv : α → β → γ
+
+infix:70 " /ₚ " => PyHDiv.hDiv
+
+@[default_instance]
+instance {α β γ} [HDiv α β γ] : PyHDiv α β γ where
+  hDiv := HDiv.hDiv
+
+instance (priority := high) : PyHDiv Int Int Rat where
+  hDiv := fun a b => (a : Rat) / (b : Rat)
+
+instance (priority := high) : PyHDiv Nat Nat Rat where
+  hDiv := fun a b => (a : Rat) / (b : Rat)
+
+@[default_instance]
+instance (priority := high) : PyHDiv Rat Rat Rat where
+  hDiv := fun a b => (a : Rat) / (b : Rat)
+
+end PyAstLean
