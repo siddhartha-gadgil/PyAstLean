@@ -26,3 +26,5 @@ htmlcov/
 # IDE Settings (Optional but recommended)
 .vscode/
 .idea/
+dataset_codecontests
+demo_dataset/1575_A._Another_Sorting_Problem

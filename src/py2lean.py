@@ -29,6 +29,99 @@ def configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
 
+
+def _node_type(node):
+    return node.get("node_type") if isinstance(node, dict) else None
+
+
+def _walk_json_nodes(node, *, skip_nested_function_bodies=False):
+    if isinstance(node, dict):
+        yield node
+        node_type = node.get("node_type")
+        for key, value in node.items():
+            if skip_nested_function_bodies and node_type == "FunctionDef" and key == "body":
+                continue
+            yield from _walk_json_nodes(value, skip_nested_function_bodies=skip_nested_function_bodies)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_json_nodes(item, skip_nested_function_bodies=skip_nested_function_bodies)
+
+
+def _body_has_direct_exception_syntax(body):
+    for stmt in body:
+        for node in _walk_json_nodes(stmt, skip_nested_function_bodies=True):
+            if _node_type(node) in {"Try", "Raise"}:
+                return True
+    return False
+
+
+def _body_calls_known_functions(body, known_names):
+    called = set()
+    for stmt in body:
+        for node in _walk_json_nodes(stmt, skip_nested_function_bodies=True):
+            if _node_type(node) != "Call":
+                continue
+            func = node.get("func")
+            if isinstance(func, dict) and func.get("node_type") == "Name":
+                func_name = func.get("id")
+                if func_name in known_names:
+                    called.add(func_name)
+    return called
+
+
+def _annotate_calls(node, effectful_names):
+    if isinstance(node, dict):
+        if node.get("node_type") == "Call":
+            func = node.get("func")
+            if isinstance(func, dict) and func.get("node_type") == "Name" and func.get("id") in effectful_names:
+                node["effect_mode"] = "except"
+        node_type = node.get("node_type")
+        for key, value in node.items():
+            if node_type == "FunctionDef" and key == "body":
+                continue
+            _annotate_calls(value, effectful_names)
+    elif isinstance(node, list):
+        for item in node:
+            _annotate_calls(item, effectful_names)
+
+
+def annotate_exception_effects(module_json):
+    """Mark function defs and direct calls that require translated `Except` handling."""
+    def annotate_scope(body):
+        local_functions = {
+            stmt["name"]: stmt
+            for stmt in body
+            if isinstance(stmt, dict) and stmt.get("node_type") == "FunctionDef"
+        }
+        for fn in local_functions.values():
+            annotate_scope(fn.get("body", []))
+
+        effectful = {
+            name: _body_has_direct_exception_syntax(fn.get("body", []))
+            for name, fn in local_functions.items()
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name, fn in local_functions.items():
+                if effectful[name]:
+                    continue
+                called = _body_calls_known_functions(fn.get("body", []), local_functions.keys())
+                if any(effectful.get(callee, False) for callee in called):
+                    effectful[name] = True
+                    changed = True
+
+        effectful_names = {name for name, is_effectful in effectful.items() if is_effectful}
+        for name, fn in local_functions.items():
+            if effectful[name]:
+                fn["effect_mode"] = "except"
+            _annotate_calls(fn.get("body", []), effectful_names)
+
+        _annotate_calls(body, effectful_names)
+
+    if isinstance(module_json, dict) and module_json.get("node_type") == "Module":
+        annotate_scope(module_json.get("body", []))
+
 def translate_to_json(source_code, filepath=None):
     """
     Parses Python source code and translates it to a JSON IR.
@@ -52,6 +145,7 @@ def translate_to_json(source_code, filepath=None):
     ast_tree = ast.parse(source_code)
     logger.debug("Parsed Python AST:\n%s", ast.dump(ast_tree, indent=4))
     data = translator.visit(ast_tree)
+    annotate_exception_effects(data)
     logger.debug("Generated JSON IR: %s", json.dumps(data))
     return json.dumps(data)
 

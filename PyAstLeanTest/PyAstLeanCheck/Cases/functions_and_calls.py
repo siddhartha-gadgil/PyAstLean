@@ -1,7 +1,7 @@
 # PYASTLEANCHECK START
 # TARGET: command
 # CHECK: def add := fun a ↦
-# CHECK: fun b ↦
+# CHECK: fun (b : Int) ↦
 # CHECK: a +ₚ b
 # CHECK: def call_add := fun n ↦
 # CHECK: (add n) (1 : Int)

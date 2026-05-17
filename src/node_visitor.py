@@ -30,6 +30,8 @@ COMPAREOP_MAP = {
     ast.LtE: "le",
     ast.Gt: "gt",
     ast.GtE: "ge",
+    ast.In: "in",
+    ast.NotIn: "notin",
 }
 
 AUGASSIGN_MAP = {
@@ -237,7 +239,7 @@ class ASTToJsonLeanVisitorBase:
         func_json = self.visit(node.func)
         args_json = [self.visit(arg) for arg in node.args]
         keywords_json = {kw.arg: self.visit(kw.value) for kw in node.keywords}
-        if func_json["id"] == "range" :
+        if func_json.get("node_type") == "Name" and func_json.get("id") == "range":
             return {
                 "node_type": "Range",
                 "func": func_json,
@@ -342,6 +344,7 @@ class ASTToJsonLeanVisitorBase:
             "args": self.visit(node.args),
             "body": self.visit(node.body)
         }
+    
     def visit_arguments(self, node):
         """Translates ast.arguments to a JSON IR node."""
         return {
@@ -429,6 +432,31 @@ class ASTToJsonLeanVisitorBase:
             "orelse": self.visit_statements(node.orelse)
         }
 
+    def visit_IfExp(self, node):
+        """Translates ast.IfExp (ternary expressions) to a JSON IR node."""
+        return {
+            "node_type": "IfExp",
+            "test": self.visit(node.test),
+            "body": self.visit(node.body),
+            "orelse": self.visit(node.orelse)
+        }
+
+    def visit_With(self, node):
+        """Translates ast.With to a JSON IR node."""
+        return {
+            "node_type": "With",
+            "items": [self.visit(item) for item in node.items],
+            "body": self.visit_statements(node.body)
+        }
+        
+    def visit_withitem(self, node):
+        """Translates ast.withitem (the context manager part of with statements) to a JSON IR node."""
+        return {
+            "node_type": "withitem",
+            "context_expr": self.visit(node.context_expr),
+            "optional_vars": self.visit(node.optional_vars) if node.optional_vars is not None else None
+        }
+
     def visit_While(self, node):
         """Translates ast.While to a JSON IR node."""
         return {
@@ -467,6 +495,14 @@ class ASTToJsonLeanVisitorBase:
         """Translates ast.ListComp (list comprehensions) to a JSON IR node."""
         return {
             "node_type": "ListComp",
+            "elt": self.visit(node.elt),
+            "generators": [self.visit(gen) for gen in node.generators]
+        }
+
+    def visit_GeneratorExp(self, node):
+        """Translates ast.GeneratorExp using the same IR shape as comprehensions."""
+        return {
+            "node_type": "GeneratorExp",
             "elt": self.visit(node.elt),
             "generators": [self.visit(gen) for gen in node.generators]
         }

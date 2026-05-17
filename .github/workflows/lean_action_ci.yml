@@ -2,8 +2,22 @@ name: Lean Action CI
 
 on:
   push:
+    branches:
+      - master
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "docs/**"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -17,6 +31,13 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Cache Python virtualenv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+
       - name: Install Python dependencies
         run: uv sync --frozen
 
@@ -24,3 +45,4 @@ jobs:
         uses: leanprover/lean-action@v1
         with:
           test: true
+          use-mathlib-cache: true

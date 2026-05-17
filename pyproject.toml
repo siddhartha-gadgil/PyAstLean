@@ -5,8 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "bs4>=0.0.2",
+    "datasets>=4.8.5",
     "libcst>=1.8.6",
+    "lxml>=6.1.0",
+    "online-judge-tools>=11.5.1",
     "pyrefly>=0.64.1",
+    "requests>=2.34.2",
+    "setuptools>=82.0.1",
 ]
 
 [tool.pyrefly]

@@ -1,14 +1,14 @@
 # PYASTLEANCHECK START
 # TARGET: command
-# CHECK: def basic_switch := fun num ↦
+# CHECK: def basic_switch := fun (num : Int) ↦
 # CHECK: match num with
 # CHECK: | (1 : Int) => "one"
 # CHECK: | (2 : Int) => "two"
 # CHECK: | _ => "other"
-# CHECK: def switch_with_guard := fun num ↦
+# CHECK: def switch_with_guard := fun (num : Int) ↦
 # CHECK: let x := num
 # CHECK: if x < (0 : Int) then "negative"
-# CHECK: def switch_with_pattern := fun num ↦
+# CHECK: def switch_with_pattern := fun (num : Int) ↦
 # CHECK: match num with
 # CHECK: | (0 : Int) => "zero"
 # CHECK: | (1 : Int) => "small number"
@@ -21,7 +21,7 @@
 # CHECK: | (x, (0 : Int)) => String.append
 # CHECK: | ((0 : Int), y) => String.append
 # CHECK: | (x, y) =>
-# CHECK: def switch_with_default := fun num ↦
+# CHECK: def switch_with_default := fun (num : Int) ↦
 # CHECK: match num with
 # CHECK: | (1 : Int) => if num == (1 : Int) then "one" else "not one"
 # CHECK: | (2 : Int) => "two"
