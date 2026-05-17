@@ -7,6 +7,9 @@ Typeclass for Python-style membership tests.
 
 This is the runtime API behind operations like `x in y` when one surface operation
 should work across several container types.
+
+This file defines the stable public Lean surface `pyContains`; individual runtime
+types extend it by adding `PyContains` instances rather than changing codegen.
 -/
 class PyContains (α : Type) where
   Elem : Type

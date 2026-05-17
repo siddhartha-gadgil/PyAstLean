@@ -50,13 +50,12 @@ Good examples:
 - operator overloading / typeclass-based generic behavior
 
 Suggested split:
-- `Core.lean`: shared runtime types like `PyException`, `PyExcept`, `pyPrint`
+- `Core.lean`: shared runtime types like `PyException`, `PyExcept`, `pyPrint`, and small cross-cutting helpers like `pyRange`
 - `Operators.lean`: `+ₚ`, `-ₚ`, `*ₚ`, `/ₚ`, `%ₚ`, `^ₚ`
-- `Iterables.lean`: `pyRange`, `pyIter`
 - `Strings.lean`: `pySplit`, `pyJoin`, `pyReplace`, ...
 - `Lists.lean`: list-specific helpers like `pyAppend`
 - `Dicts.lean`: dict-specific helpers like `pyItems`
-- `CommonAPI/`: cross-type typeclass-based APIs like `pyLen`, `pyContains`
+- `CommonProtocols/`: intentionally extensible protocols like `pyLen`, `pyContains`, `pyIter`
 
 ### `PyGens/`
 
@@ -92,21 +91,27 @@ So:
 - implementation lives in `PyAPI/*`
 - method-name dispatch lives in `Attributes.lean`
 
-### `PyAPI/CommonAPI/`
+### `PyAPI/CommonProtocols/`
 
-Use `CommonAPI/` for cross-type Python APIs where one generated Lean function name
-should work for several runtime types.
+Use `CommonProtocols/` only for operations that are deliberately meant to be
+extensible across runtime types.
 
 Good examples:
 - `pyLen` for `List`, `String`, `Std.HashMap`, ...
 - `pyContains` for membership tests across containers
+- `pyIter` for iterable normalization
 
 These are usually typeclass-based APIs:
 - codegen emits one stable name
 - Lean chooses the implementation from the argument type
 
-This is the right home for Python builtins or operator-like behavior that is shared
-across unrelated types.
+This is the right home when you want one stable public runtime name and expect new
+types to extend that operation later by adding instances.
+
+This is not the right home for every helper that merely feels reusable.
+Concrete APIs like `pyUpper`, `pySplit`, `pyItems`, or a list-specific `pyAppend`
+should stay in their type-specific files unless you intentionally promote them into
+a shared protocol.
 
 ## Builtins vs Methods
 
@@ -119,7 +124,7 @@ This distinction matters:
 
 Builtins are not handled by `Attributes.lean`.
 They usually go through function-name mapping such as `#map_names`, and then call a
-runtime function in `PyAPI/CommonAPI/` or another `PyAPI/*` file.
+runtime function in `PyAPI/CommonProtocols/` or another `PyAPI/*` file.
 
 Methods go through `Attributes.lean`.
 
@@ -174,7 +179,7 @@ pyLen x
 and Lean will choose the right implementation from the type of `x`.
 
 Where this should go:
-- runtime API: `PyAPI/CommonAPI/Length.lean`
+- runtime API: `PyAPI/CommonProtocols/Length.lean`
 
 How Python reaches it:
 - map builtin `len` to `pyLen`
@@ -208,9 +213,27 @@ When adding a new Python feature, ask:
    - syntax lowering -> `PyGens/`
 
 2. Is this a builtin/function name or a method name?
-   - builtin -> builtin mapping / `#map_names` and often `PyAPI/CommonAPI/`
+   - builtin -> builtin mapping / `#map_names` and often `PyAPI/CommonProtocols/`
    - method -> `Attributes.lean`
 
 3. Does one Python operation need multiple Lean implementations based on type?
    - yes -> use a typeclass
    - no -> plain function is enough
+
+## Stable Surface Rule
+
+Try to keep one stable public Lean name per Python operation.
+
+Examples:
+- `len(x)` lowers to `pyLen`
+- `x in y` lowers to `pyContains`
+- `xs.append(v)` lowers to `pyAppend`
+- `s.upper()` lowers to `pyUpper`
+
+Then choose the implementation strategy underneath:
+- if the operation is intentionally extensible, put the public name in `CommonProtocols/`
+- if it is concrete today, keep it as a plain function in a type-specific file
+
+This lets codegen stay stable. If a concrete operation later needs to become
+extensible, you can promote its implementation to a protocol without changing the
+generated surface syntax.

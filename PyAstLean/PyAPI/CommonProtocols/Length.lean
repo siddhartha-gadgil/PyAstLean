@@ -7,6 +7,9 @@ Typeclass for Python-style length queries.
 
 Use this for builtins like `len(x)` when one Python surface operation should work
 across several Lean runtime types.
+
+This file defines the stable public Lean surface `pyLen`; individual runtime types
+extend it by adding `PyLen` instances rather than changing codegen.
 -/
 class PyLen (α : Type) where
   pyLen : α → Int
