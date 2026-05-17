@@ -4,6 +4,7 @@ import PyAstLean.PyGens.Basic
 import PyAstLean.PyGens.Utils
 import PyAstLean.PyGens.Assign
 import PyAstLean.PyGens.ControlFlow
+import PyAstLean.PyGens.ListComp
 import PyAstLean.PyGens.Match
 import PyAstLean.PyGens.Exceptions
 
@@ -101,6 +102,20 @@ def functionBodyElems (json : Json) : PygenM (Array Json) := do
   let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
     s!"FuncDef node does not have a 'body' field or it is not a JSON value: {json}"
   return bodyElems
+
+/-- Check whether a JSON subtree references a given variable name. -/
+partial def jsonReferencesName (json : Json) (target : String) : Bool :=
+  let directMatch :=
+    match json.getObjValAs? String "node_type", json.getObjValAs? String "id" with
+    | .ok "Name", .ok id => id == target
+    | _, _ => false
+  if directMatch then
+    true
+  else
+    match json with
+    | .arr elems => elems.toList.any (fun elem => jsonReferencesName elem target)
+    | .obj fields => fields.toList.any (fun (_, value) => jsonReferencesName value target)
+    | _ => false
 
 /-- Build the Lean value for a Python function body, using a pure term when possible and
 falling back to `do` notation for effectful bodies. This helper is reused for top-level
@@ -287,25 +302,6 @@ def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
           getCode value `term
         return valueStx
     | _, _ => throwError s!"Unsupported syntax category for Head_Return node"
-
-@[pygen "Lambda"]
-def lambdaStx: (kind : SyntaxNodeKind) → Json →
-    PygenM (TSyntax kind)
-    | `term, json => do
-        let .ok _ := json.getObjValAs? Json "args" | throwError
-          s!"Lambda node does not have an 'args' field or it is not a JSON value: {json}"
-        let .ok body := json.getObjValAs? Json "body" | throwError
-          s!"Lambda node does not have a 'body' field or it is not a JSON value: {json}"
-        let argInfos ← functionArgInfos json
-        let bodyStx ← getCode body `term
-        let mut result := bodyStx
-        for (argIdent, ty?) in argInfos.toList.reverse do
-          result ← match ty? with
-            | some ty => `(fun ($argIdent : $ty) ↦ $result)
-            | none => `(fun $argIdent ↦ $result)
-        pure result
-
-    | _, _ => throwError s!"Unsupported syntax category for Lambda node"
 
 def f := fun n =>
       let x := n -ₚ 1

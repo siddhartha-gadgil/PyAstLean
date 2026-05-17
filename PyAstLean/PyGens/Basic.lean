@@ -40,6 +40,9 @@ def constantSyntax : (kind : SyntaxNodeKind) → Json →
         let trueStx := mkIdent ``true
         let falseStx := mkIdent ``false
         if b then `($trueStx) else `($falseStx)
+    | .null =>
+        let noneIdent := mkIdent ``none
+        `($noneIdent)
     | _ => throwError s!"Unsupported constant value: {value}"
   | _, _ => throwError s!"Unsupported syntax category for Constant node"
 
@@ -77,11 +80,14 @@ def tupleSyntax : (kind : SyntaxNodeKind) → Json →
     let eltCodes ← match eltsJson with
       | .arr arr => arr.mapM (fun eltJson => getCode eltJson `term)
       | _ => throwError s!"Tuple node 'elts' field is not an array: {eltsJson}"
-    match eltCodes.size with
-    | 0 => `(())
-    | 1 => return eltCodes[0]!
-    | 2 => `(($(eltCodes[0]!), $(eltCodes[1]!)))
-    | _ => throwError "Tuple literals with more than two elements are not yet supported."
+    let rec buildTuple (elts : List (TSyntax `term)) : PygenM (TSyntax `term) := do
+      match elts with
+      | [] => `(())
+      | [single] => pure single
+      | first :: rest => do
+          let restTuple ← buildTuple rest
+          `(($first, $restTuple))
+    buildTuple eltCodes.toList
   | _, _ => throwError s!"Unsupported syntax category for Tuple node"
 
 @[pygen "Dict"]
@@ -283,6 +289,46 @@ def pyRange (stop : Int) (start : Int := 0) (step : Int := 1) : List Int := do
   else
     []
 
+class PyIterable (α : Type) where
+  Elem : Type
+  toPyList : α → List Elem
+
+def pyIter {α : Type} [inst : PyIterable α] (value : α) : List inst.Elem :=
+  inst.toPyList value
+
+instance : PyIterable (List α) where
+  Elem := α
+  toPyList := id
+
+instance : PyIterable (Array α) where
+  Elem := α
+  toPyList := Array.toList
+
+instance : PyIterable String where
+  Elem := Char
+  toPyList := String.toList
+
+class PyContains (α : Type) where
+  Elem : Type
+  contains : α → Elem → Bool
+
+def pyContains {α : Type} [inst : PyContains α] (container : α) (value : inst.Elem) : Bool :=
+  inst.contains container value
+
+instance [BEq α] : PyContains (List α) where
+  Elem := α
+  contains := fun xs x => xs.contains x
+
+instance : PyContains String where
+  Elem := Char
+  contains := fun s c => s.contains c
+
+/-- Detect the JSON encoding of Python's `None`. -/
+def isNoneConstantJson (json : Json) : Bool :=
+  match json.getObjValAs? String "node_type", json.getObjValAs? Json "value" with
+  | .ok "Constant", .ok .null => true
+  | _, _ => false
+
 -- #eval pyRange 10 (17:Int) (-2)
 @[pygen "BinOp"]
 def binOpSyntax : (kind : SyntaxNodeKind) → Json →
@@ -356,6 +402,14 @@ def compareSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Compare node does not have a 'right' field or it is not a JSON value: {json}"
     let leftCode ← getCode leftJson `term
     let rightCode ← getCode rightJson `term
+    let usePyContains :=
+      match rightJson.getObjValAs? String "node_type" with
+      | .ok "BinOp" => true
+      | .ok "Constant" =>
+          match rightJson.getObjValAs? Json "value" with
+          | .ok (.str _) => true
+          | _ => false
+      | _ => false
     match op with
     | "eq" => `($leftCode == $rightCode)
     | "ne" => `($leftCode != $rightCode)
@@ -363,8 +417,47 @@ def compareSyntax : (kind : SyntaxNodeKind) → Json →
     | "le" => `($leftCode <= $rightCode)
     | "gt" => `($leftCode > $rightCode)
     | "ge" => `($leftCode >= $rightCode)
+    | "in" =>
+        if usePyContains = true then
+          let containsIdent := mkIdent ``pyContains
+          `($containsIdent $rightCode $leftCode)
+        else
+          `(decide ($leftCode ∈ $rightCode))
+    | "notin" =>
+        if usePyContains = true then
+          let containsIdent := mkIdent ``pyContains
+          `(! ($containsIdent $rightCode $leftCode))
+        else
+          `(decide ($leftCode ∉ $rightCode))
     | _ => throwError s!"Unsupported comparison operator: {op}"
   | _, _ => throwError s!"Unsupported syntax category for Compare node"
+
+@[pygen "IfExp"]
+def ifExpSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+  | `term, json => do
+    let .ok testJson := json.getObjValAs? Json "test" | throwError
+      s!"IfExp node does not have a 'test' field or it is not a JSON value: {json}"
+    let .ok bodyJson := json.getObjValAs? Json "body" | throwError
+      s!"IfExp node does not have a 'body' field or it is not a JSON value: {json}"
+    let .ok orelseJson := json.getObjValAs? Json "orelse" | throwError
+      s!"IfExp node does not have an 'orelse' field or it is not a JSON value: {json}"
+    let testCode ← getCode testJson `term
+    let bodyIsNone := isNoneConstantJson bodyJson
+    let orelseIsNone := isNoneConstantJson orelseJson
+    if bodyIsNone && orelseIsNone then
+      `(none)
+    else if bodyIsNone then
+      let orelseCode ← getCode orelseJson `term
+      `(if $testCode then none else some $orelseCode)
+    else if orelseIsNone then
+      let bodyCode ← getCode bodyJson `term
+      `(if $testCode then some $bodyCode else none)
+    else
+      let bodyCode ← getCode bodyJson `term
+      let orelseCode ← getCode orelseJson `term
+      `(if $testCode then $bodyCode else $orelseCode)
+  | _, _ => throwError s!"Unsupported syntax category for IfExp node"
 
 -- Example
 def onePlusTwoNode := json% {
@@ -388,57 +481,88 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
     let .ok argsJson := json.getObjValAs? Json "args" | throwError
       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
-    let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
-      | .ok "Name", .ok funcName =>
-          let mappedName ← leanName funcName.toName
-          pure <| (mkIdent mappedName : TSyntax `term)
-      | _, _ =>
-          getCode funcJson `term
-    let mut t ← `($funcCode)
-    let argsCodes ← match argsJson with
-      | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
-      | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-    for argCode in argsCodes do
-      t ←  `($t $argCode)
-    let .ok keyWordsJson := json.getObjVal?  "keywords" | throwError
+    let .ok keyWordsJson := json.getObjVal? "keywords" | throwError
       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
-    for (kwName, kwValueJson) in keyWordsMap.toList do
-      let kwValueCode ← getCode kwValueJson `term
-      let kwId := mkIdent kwName.toName
-      t ← `($t ($kwId:ident := $kwValueCode))
-    return t
+    match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "attr" with
+    | .ok "Attribute", .ok "items" =>
+        unless keyWordsMap.isEmpty do
+          throwError "Dictionary items() calls do not support keyword arguments."
+        let argsArray ← match argsJson with
+          | .arr arr => pure arr
+          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+        unless argsArray.isEmpty do
+          throwError "Dictionary items() calls do not support positional arguments."
+        let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
+          s!"Attribute call is missing a 'value' field: {funcJson}"
+        let valueCode ← getCode valueJson `term
+        let toListIdent := mkIdent ``Std.HashMap.toList
+        `($toListIdent $valueCode)
+    | _, _ => do
+        let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+          | .ok "Name", .ok funcName =>
+              let mappedName ← leanName funcName.toName
+              pure <| (mkIdent mappedName : TSyntax `term)
+          | _, _ =>
+              getCode funcJson `term
+        let mut t ← `($funcCode)
+        let argsCodes ← match argsJson with
+          | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+        for argCode in argsCodes do
+          t ←  `($t $argCode)
+        for (kwName, kwValueJson) in keyWordsMap.toList do
+          let kwValueCode ← getCode kwValueJson `term
+          let kwId := mkIdent kwName.toName
+          t ← `($t ($kwId:ident := $kwValueCode))
+        return t
   | `doElem, json => do
     let .ok funcJson := json.getObjValAs? Json "func" | throwError
       s!"Call node does not have a 'func' field or it is not a JSON value: {json}"
     let .ok argsJson := json.getObjValAs? Json "args" | throwError
       s!"Call node does not have an 'args' field or it is not a JSON value: {json}"
-    let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
-      | .ok "Name", .ok funcName =>
-          let mappedName ← leanName funcName.toName
-          pure <| (mkIdent mappedName : TSyntax `term)
-      | _, _ =>
-          getCode funcJson `term
-    let mut t ← `($funcCode)
-    let argsCodes ← match argsJson with
-      | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
-      | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
-    for argCode in argsCodes do
-      t ← `($t $argCode)
     let .ok keyWordsJson := json.getObjVal? "keywords" | throwError
       s!"Call node does not have a 'keywords' field or it is not json pairs: {json}"
     let .ok keyWordsMap := keyWordsJson.getObj? | throwError
       s!"Call node 'keywords' field is not a JSON object: {keyWordsJson}"
-    for (kwName, kwValueJson) in keyWordsMap.toList do
-      let kwValueCode ← getCode kwValueJson `term
-      let kwId := mkIdent kwName.toName
-      t ← `($t ($kwId:ident := $kwValueCode))
-    let callCode := t
-    if basicJsonUsesExceptionEffect json then
-      `(doElem| let _ ← $callCode:term)
-    else
-      `(doElem| let _ := $callCode)
+    match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "attr" with
+    | .ok "Attribute", .ok "append" =>
+        unless keyWordsMap.isEmpty do
+          throwError "append() calls do not support keyword arguments."
+        let argsArray ← match argsJson with
+          | .arr arr => pure arr
+          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+        let some argJson := argsArray[0]? | throwError "append() expects exactly one positional argument."
+        unless argsArray.size == 1 do
+          throwError "append() expects exactly one positional argument."
+        let .ok valueJson := funcJson.getObjValAs? Json "value" | throwError
+          s!"Attribute call is missing a 'value' field: {funcJson}"
+        let targetIdent ← getCode valueJson `ident
+        let argCode ← getCode argJson `term
+        `(doElem| $targetIdent:ident := $targetIdent ++ [$argCode])
+    | _, _ => do
+        let funcCode : TSyntax `term ← match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
+          | .ok "Name", .ok funcName =>
+              let mappedName ← leanName funcName.toName
+              pure <| (mkIdent mappedName : TSyntax `term)
+          | _, _ =>
+              getCode funcJson `term
+        let mut t ← `($funcCode)
+        let argsCodes ← match argsJson with
+          | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
+          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+        for argCode in argsCodes do
+          t ← `($t $argCode)
+        for (kwName, kwValueJson) in keyWordsMap.toList do
+          let kwValueCode ← getCode kwValueJson `term
+          let kwId := mkIdent kwName.toName
+          t ← `($t ($kwId:ident := $kwValueCode))
+        let callCode := t
+        if basicJsonUsesExceptionEffect json then
+          `(doElem| let _ ← $callCode:term)
+        else
+          `(doElem| let _ := $callCode)
   | _, _ => throwError s!"Unsupported syntax category for Call node"
 
 
@@ -447,21 +571,13 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
 def attributeSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
   | `term, json => do
-    -- IO.eprintln s!"Generating code for Attribute node with JSON: {json}" -- Debugging output
     let .ok valueJson := json.getObjValAs? Json "value" | throwError
       s!"Attribute node does not have a 'value' field or it is not a JSON value: {json}"
     let .ok attr := json.getObjValAs? String "attr" | throwError
       s!"Attribute node does not have an 'attr' field or it is not a string: {json}"
-    try
-      let id ← getCode valueJson `ident
-      return mkIdent <| id.getId ++ attr.toName
-    catch _ => do
-      -- IO.eprintln s!"Generating code for Attribute value: {valueJson} as value not a name" -- Debugging output
-      let valueCode ←
-          getCode valueJson `term
-      -- IO.eprintln s!"Generated code for Attribute value: {valueCode} : {← `($valueCode)}" -- Debugging output
-      let attrId := mkIdent attr.toName
-      `($valueCode.$attrId)
+    let valueCode ← getCode valueJson `term
+    let attrId := mkIdent attr.toName
+    `($valueCode.$attrId)
   | `ident, json => do
     let .ok valueJson := json.getObjValAs? Json "value" | throwError
       s!"Attribute node does not have a 'value' field or it is not a JSON value: {json}"
@@ -470,6 +586,26 @@ def attributeSyntax : (kind : SyntaxNodeKind) → Json →
     let id ← getCode valueJson `ident
     return mkIdent <| id.getId ++ attr.toName
   | _, _ => throwError s!"Unsupported syntax category for Attribute node"
+
+@[pygen "Subscript"]
+def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+  | `term, json => do
+    let .ok valueJson := json.getObjValAs? Json "value" | throwError
+      s!"Subscript node does not have a 'value' field or it is not a JSON value: {json}"
+    let .ok sliceJson := json.getObjValAs? Json "slice" | throwError
+      s!"Subscript node does not have a 'slice' field or it is not a JSON value: {json}"
+    let valueCode ← getCode valueJson `term
+    match sliceJson.getObjValAs? String "node_type", sliceJson.getObjValAs? Json "value" with
+    | .ok "Constant", .ok (.num (JsonNumber.mk 0 0)) =>
+        let fstIdent := mkIdent ``Prod.fst
+        `($fstIdent $valueCode)
+    | .ok "Constant", .ok (.num (JsonNumber.mk 1 0)) =>
+        let sndIdent := mkIdent ``Prod.snd
+        `($sndIdent $valueCode)
+    | _, _ =>
+        throwError "Only tuple subscript projections `[0]` and `[1]` are supported right now."
+  | _, _ => throwError s!"Unsupported syntax category for Subscript node"
 
 
 def fn := fun n => show IO _ from  do
