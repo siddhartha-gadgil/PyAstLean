@@ -418,6 +418,9 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
         | _ =>
             throwError "get() expects one or two positional arguments."
 
+      if attr == "sort" then
+        throwError "sort() is only supported as a statement; use sorted(x) in expressions."
+
       let valCode ← getCode valueJson `term
 
       -- Push the base object as the very first argument
@@ -511,6 +514,18 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
           | _ =>
               throwError "get() expects one or two positional arguments."
         return ← `(doElem| let _ := $t)
+
+      if attr == "sort" then
+        unless keyWordsMap.isEmpty do
+          throwError "sort() calls do not support keyword arguments yet."
+        let argsArray ← match argsJson with
+          | .arr arr => pure arr
+          | _ => throwError s!"Call node 'args' field is not an array: {argsJson}"
+        unless argsArray.isEmpty do
+          throwError "sort() expects no positional arguments."
+        let targetIdent ← getCode valueJson `ident
+        let pySortIdent := mkIdent ``pySort
+        return ← `(doElem| $targetIdent:ident := $pySortIdent $targetIdent)
 
       let valCode ← getCode valueJson `term
 

@@ -17,7 +17,9 @@ private def stripLeftBy (p : Char → Bool) : List Char → List Char
 
 /-- Helper used by `strip` to remove matching characters from both ends. -/
 private def stripBy (p : Char → Bool) (s : String) : String :=
-  String.ofList <| (stripLeftBy p <| (stripLeftBy p s.toList.reverse)).reverse
+  let leftTrimmed := stripLeftBy p s.toList
+  let rightTrimmedRev := stripLeftBy p leftTrimmed.reverse
+  String.ofList rightTrimmedRev.reverse
 
 /--
 Python-style `split()` with no explicit separator.
