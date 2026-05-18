@@ -262,7 +262,45 @@ class LeanBackendClient:
     def binary_path(self):
         return self.cwd / ".lake" / "build" / "bin" / "py2lean"
 
+    def _tracked_backend_sources(self):
+        """Yield Lean source files whose freshness determines whether `py2lean` must be rebuilt."""
+        explicit_files = [
+            self.cwd / "py2lean.lean",
+            self.cwd / "lakefile.lean",
+            self.cwd / "lean-toolchain",
+        ]
+        for path in explicit_files:
+            if path.exists():
+                yield path
+
+        pyastlean_dir = self.cwd / "PyAstLean"
+        if pyastlean_dir.exists():
+            yield from pyastlean_dir.rglob("*.lean")
+
+    def _binary_needs_rebuild(self):
+        """Return true when the backend binary is missing or older than tracked Lean sources."""
+        binary = self.binary_path
+        if not binary.exists():
+            logger.debug("py2lean backend binary is missing; rebuild required.")
+            return True
+
+        binary_mtime = binary.stat().st_mtime
+        latest_source_mtime = max(
+            (path.stat().st_mtime for path in self._tracked_backend_sources()),
+            default=0.0,
+        )
+        if latest_source_mtime > binary_mtime:
+            logger.debug(
+                "A tracked Lean source is newer than the py2lean backend binary; rebuild required."
+            )
+            return True
+        return False
+
     def _ensure_binary(self):
+        if not self._binary_needs_rebuild():
+            logger.debug("Reusing existing py2lean backend binary; no rebuild needed.")
+            return
+
         logger.debug("Building py2lean backend binary before starting server.")
         build = subprocess.run(
             ["lake", "build", "py2lean"],

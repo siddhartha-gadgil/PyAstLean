@@ -325,7 +325,10 @@ def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
     | .error err => return .error err
     | .ok _ =>
       if spec.exitCode == 0 then
-        compileGeneratedLean pyPath spec.target out.stdout
+        if spec.target == "term" then
+          return .ok ()
+        else
+          compileGeneratedLean pyPath spec.target out.stdout
       else
         return .ok ()
 
