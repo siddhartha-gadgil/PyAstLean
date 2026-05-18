@@ -48,10 +48,6 @@ def pyDictPop [BEq α] [Hashable α] (m : Std.HashMap α β) (key : α) (default
   | some value => (some value, m.erase key)
   | none => (default, m)
 
-/-- Public runtime surface for Python `pop()`. -/
-def pyPop [BEq α] [Hashable α] (m : Std.HashMap α β) (key : α) (default : Option β := none) : (Option β × Std.HashMap α β) :=
-  pyDictPop m key default
-
 def pyDictUpdate [BEq α] [Hashable α] (m : Std.HashMap α β) (updates : List (α × β)) : Std.HashMap α β :=
   updates.foldl (fun acc (k, v) => acc.insert k v) m
 
