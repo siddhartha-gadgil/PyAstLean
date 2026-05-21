@@ -29,7 +29,35 @@ def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
     | _ => false
     let isString := isStringConstant valueJson
 
-    if isTuple then
+    let sliceType := sliceJson.getObjValAs? String "node_type"
+    if sliceType == .ok "Slice" then
+        let parseBound (j : Json) : Option Int :=
+            match j.getObjValAs? Json "node_type" with
+            | .ok "Constant" =>
+                match j.getObjValAs? Int "value" with
+                | .ok i => some i
+                | _ => none
+            | .ok "UnaryOp" =>
+                match j.getObjValAs? String "op", j.getObjValAs? Json "operand" with
+                | .ok "neg", .ok operand =>
+                    match operand.getObjValAs? Int "value" with
+                    | .ok i => some (-i)
+                    | _ => none
+                | _, _ => none
+            | _ => none
+
+        let lowerOpt := (sliceJson.getObjVal? "lower").toOption.bind parseBound
+        let upperOpt := (sliceJson.getObjVal? "upper").toOption.bind parseBound
+            
+        let sliceIdent := mkIdent `PyAstLean.pyStringSlice
+        let startStx ← match lowerOpt with
+            | some i => let iStx ← intToStx i; `(some $iStx)
+            | none => `(none)
+        let stopStx ← match upperOpt with
+            | some i => let iStx ← intToStx i; `(some $iStx)
+            | none => `(none)
+        `($sliceIdent $valueCode $startStx $stopStx)
+    else if isTuple then
         match sliceJson.getObjValAs? String "node_type", sliceJson.getObjValAs? Json "value" with
         | .ok "Constant", .ok (.num (JsonNumber.mk 0 0)) =>
             let fstIdent := mkIdent ``Prod.fst

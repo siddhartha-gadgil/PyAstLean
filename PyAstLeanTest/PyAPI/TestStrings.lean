@@ -1,3 +1,4 @@
+import PyAstLean
 import PyAstLean.PyAPI.Strings
 
 open PyAstLean
@@ -73,3 +74,15 @@ open PyAstLean
 /-- info: "MIXED" -/
 #guard_msgs in
 #eval pyStringUpper "MiXeD"
+
+/-- info: "ell" -/
+#guard_msgs in
+#eval pyStringSlice "hello" (some 1) (some 4)
+
+/-- info: "he" -/
+#guard_msgs in
+#eval pyStringSlice "hello" (some 0) (some 2)
+
+/-- info: "lo" -/
+#guard_msgs in
+#eval pyStringSlice "hello" (some 3) none

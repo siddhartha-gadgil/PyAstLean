@@ -272,6 +272,15 @@ class ASTToJsonLeanVisitorBase:
             "slice": self.visit(node.slice)
         }
 
+    def visit_Slice(self, node):
+        """Translates ast.Slice (e.g., [start:stop:step]) to a JSON IR node."""
+        return {
+            "node_type": "Slice",
+            "lower": self.visit(node.lower) if node.lower is not None else None,
+            "upper": self.visit(node.upper) if node.upper is not None else None,
+            "step": self.visit(node.step) if node.step is not None else None
+        }
+
     def visit_List(self, node):
         """Translates ast.List to a JSON IR node."""
         return {
