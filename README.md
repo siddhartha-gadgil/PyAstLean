@@ -90,6 +90,18 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Libraries
+
+Python libraries can be supported in PyAstLean by writing Lean definitions that correspond to the Python library's API. These definitions can be made by implementing the necessary translation logic in the Lean backend, then added to PyAstLean by creating a mapping using `Mapping.lean` which is simply a map from python name for a function to Your Lean definition.
+
+For example, see [math](./Libraries/math/) library, which uses Mathlib to implement some of the functions from Python's `math` module.
+
+### How to add your own library
+
+You have two options, either download a premade Lean library for that Python library(from GitHub) or write your own Lean definitions for the Python library and create Mappings for the functions you want to support.
+
+See [Libraries](./Libraries/) for examples of how to add a library and use it.
+
 ## Testing
 
 
