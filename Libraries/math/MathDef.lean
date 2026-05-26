@@ -2,9 +2,35 @@ import Mathlib
 
 namespace Libraries.math
 
-/-- Internal helper for the float-oriented `math` runtime surface. -/
-def ratToFloat (x : Rat) : Float :=
-  Rat.toFloat x
+/-- Types that can be fed to the float-oriented `math` runtime surface. -/
+class PyMathFloatArg (α : Type) where
+  toFloat : α → Float
+
+export PyMathFloatArg (toFloat)
+
+/-- Rational inputs convert exactly to Lean floats. -/
+instance : PyMathFloatArg Rat where
+  toFloat := Rat.toFloat
+
+/-- Integer inputs are first viewed as rationals. -/
+instance : PyMathFloatArg Int where
+  toFloat x := Rat.toFloat (x : Rat)
+
+/-- Natural inputs are first viewed as rationals. -/
+instance : PyMathFloatArg Nat where
+  toFloat x := Rat.toFloat (x : Rat)
+
+/-- Floats are already in the target runtime representation. -/
+instance : PyMathFloatArg Float where
+  toFloat := id
+
+/-- Boolean arguments follow Python's `True = 1`, `False = 0` convention. -/
+instance : PyMathFloatArg Bool where
+  toFloat b := if b then 1.0 else 0.0
+
+/-- Convert a floating-point whole number result back to `Int`. -/
+def floatToInt (x : Float) : Int :=
+  Int64.toInt x.toInt64
 
 /--
 Python's `math` module is float-oriented. We therefore expose a computable `Float`-based
@@ -19,72 +45,78 @@ def pyMathE : Float :=
   2.718281828459045
 
 /-- Python `math.sqrt`, using Lean's computable floating-point square root. -/
-def pyMathSqrt (x : Rat) : Float :=
-  Float.sqrt (Rat.toFloat x)
+def pyMathSqrt {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.sqrt (toFloat x)
 
 /-- Python `math.sin`, using Lean's computable floating-point sine. -/
-def pyMathSin (x : Rat) : Float :=
-  Float.sin (Rat.toFloat x)
+def pyMathSin {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.sin (toFloat x)
 
 /-- Python `math.cos`, using Lean's computable floating-point cosine. -/
-def pyMathCos (x : Rat) : Float :=
-  Float.cos (Rat.toFloat x)
+def pyMathCos {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.cos (toFloat x)
 
 /-- Python `math.tan`, using Lean's computable floating-point tangent. -/
-def pyMathTan (x : Rat) : Float :=
-  Float.tan (Rat.toFloat x)
+def pyMathTan {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.tan (toFloat x)
 
 /-- Python `math.log`, using Lean's computable floating-point natural logarithm. -/
-def pyMathLog (x : Rat) : Float :=
-  Float.log (Rat.toFloat x)
+def pyMathLog {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.log (toFloat x)
 
 /-- Python `math.exp`, using Lean's computable floating-point exponential. -/
-def pyMathExp (x : Rat) : Float :=
-  Float.exp (Rat.toFloat x)
+def pyMathExp {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.exp (toFloat x)
 
 /-- Python `math.fabs`, returning a floating-point absolute value. -/
-def pyMathFabs (x : Rat) : Float :=
-  Float.abs (ratToFloat x)
+def pyMathFabs {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.abs (toFloat x)
 
 /-- Python `math.floor`, returning the greatest integer less than or equal to the input. -/
-def pyMathFloor (x : Rat) : Int :=
-  Int.floor x
+def pyMathFloor {α : Type} [PyMathFloatArg α] (x : α) : Int :=
+  floatToInt (Float.floor (toFloat x))
 
 /-- Python `math.ceil`, returning the least integer greater than or equal to the input. -/
-def pyMathCeil (x : Rat) : Int :=
-  Int.ceil x
+def pyMathCeil {α : Type} [PyMathFloatArg α] (x : α) : Int :=
+  floatToInt (Float.ceil (toFloat x))
 
 /-- Python `math.trunc`, truncating toward zero. -/
-def pyMathTrunc (x : Rat) : Int :=
-  if x < 0 then Int.ceil x else Int.floor x
+def pyMathTrunc {α : Type} [PyMathFloatArg α] (x : α) : Int :=
+  let xf := toFloat x
+  if xf < 0.0 then
+    floatToInt (Float.ceil xf)
+  else
+    floatToInt (Float.floor xf)
 
 /-- Python `math.pow`, returning a floating-point result. -/
-def pyMathPow (x y : Rat) : Float :=
-  Float.pow (ratToFloat x) (ratToFloat y)
+def pyMathPow {α β : Type} [PyMathFloatArg α] [PyMathFloatArg β] (x : α) (y : β) : Float :=
+  Float.pow (toFloat x) (toFloat y)
 
 /-- Python `math.atan2`, using Lean's computable floating-point implementation. -/
-def pyMathAtan2 (y x : Rat) : Float :=
-  Float.atan2 (ratToFloat y) (ratToFloat x)
+def pyMathAtan2 {α β : Type} [PyMathFloatArg α] [PyMathFloatArg β] (y : α) (x : β) : Float :=
+  Float.atan2 (toFloat y) (toFloat x)
 
 /-- Python `math.hypot`, restricted to the common two-argument form. -/
-def pyMathHypot (x y : Rat) : Float :=
-  Float.sqrt (ratToFloat x * ratToFloat x + ratToFloat y * ratToFloat y)
+def pyMathHypot {α β : Type} [PyMathFloatArg α] [PyMathFloatArg β] (x : α) (y : β) : Float :=
+  let xf := toFloat x
+  let yf := toFloat y
+  Float.sqrt (xf * xf + yf * yf)
 
 /-- Python `math.log2`, via the natural logarithm. -/
-def pyMathLog2 (x : Rat) : Float :=
-  Float.log (ratToFloat x) / Float.log 2.0
+def pyMathLog2 {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.log (toFloat x) / Float.log 2.0
 
 /-- Python `math.log10`, via the natural logarithm. -/
-def pyMathLog10 (x : Rat) : Float :=
-  Float.log (ratToFloat x) / Float.log 10.0
+def pyMathLog10 {α : Type} [PyMathFloatArg α] (x : α) : Float :=
+  Float.log (toFloat x) / Float.log 10.0
 
 /-- Python `math.radians`, converting degrees to radians. -/
-def pyMathRadians (deg : Rat) : Float :=
-  ratToFloat deg * pyMathPi / 180.0
+def pyMathRadians {α : Type} [PyMathFloatArg α] (deg : α) : Float :=
+  toFloat deg * pyMathPi / 180.0
 
 /-- Python `math.degrees`, converting radians to degrees. -/
-def pyMathDegrees (rad : Rat) : Float :=
-  ratToFloat rad * 180.0 / pyMathPi
+def pyMathDegrees {α : Type} [PyMathFloatArg α] (rad : α) : Float :=
+  toFloat rad * 180.0 / pyMathPi
 
 /-- Python `math.factorial`, restricted to nonnegative integers. -/
 def pyMathFactorial (n : Int) : Int :=

@@ -1,5 +1,6 @@
 import Lean
 import Libraries.math.Mapping
+import Libraries.numpy.Mapping
 
 namespace Libraries
 
@@ -13,6 +14,7 @@ coming from a specific imported module.
 def pythonLibraryMap? (moduleName member : String) : Option Lean.Name :=
   match moduleName with
   | "math" => math.pythonMathMemberMap? member
+  | "numpy" => numpy.pythonNumpyMemberMap? member
   | _ => none
 
 end Libraries
