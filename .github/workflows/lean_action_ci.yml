@@ -44,5 +44,5 @@ jobs:
       - name: Build and Test Lean project
         uses: leanprover/lean-action@v1
         with:
-          test: true
+          test: ${{ github.event_name == 'pull_request' }}
           use-mathlib-cache: true

@@ -1,4 +1,4 @@
-import PyAstLean.PyGens.Assign
+import PyAstLean.PyGens.Core.Assign
 
 open Lean Meta Elab Term Qq Std
 

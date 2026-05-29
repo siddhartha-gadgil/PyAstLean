@@ -1,12 +1,12 @@
 import Mathlib
 import PyAstLean.Codegen
 import PyAstLean.PyGens.Basic
-import PyAstLean.PyGens.Utils
-import PyAstLean.PyGens.Assign
-import PyAstLean.PyGens.ControlFlow
-import PyAstLean.PyGens.ListComp
-import PyAstLean.PyGens.Match
-import PyAstLean.PyGens.Exceptions
+import PyAstLean.PyGens.Core.Utils
+import PyAstLean.PyGens.Core.Assign
+import PyAstLean.PyGens.UseCases.ControlFlow
+import PyAstLean.PyGens.UseCases.ListComp
+import PyAstLean.PyGens.UseCases.Match
+import PyAstLean.PyGens.UseCases.Exceptions
 
 open Lean Meta Elab Term Qq Std
 

@@ -1,6 +1,6 @@
 import Mathlib
 import PyAstLean.Codegen
-import PyAstLean.PyGens.FuncDef
+import PyAstLean.PyGens.UseCases.FuncDef
 
 open Lean Meta Elab Term
 

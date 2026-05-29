@@ -1,7 +1,7 @@
 import Mathlib
 import PyAstLean.Codegen
 import PyAstLean.PyGens.Basic
-import PyAstLean.PyGens.Utils
+import PyAstLean.PyGens.Core.Utils
 
 open Lean Meta Elab Term Qq Std
 

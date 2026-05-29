@@ -2,9 +2,9 @@ import Mathlib
 import PyAstLean.Codegen
 import PyAstLean.PyGens.Basic
 import PyAstLean.PyGens.Attributes
-import PyAstLean.PyGens.CallEffects
-import PyAstLean.PyGens.CallShared
-import PyAstLean.PyGens.SpecialCalls
+import PyAstLean.PyGens.Calls.CallEffects
+import PyAstLean.PyGens.Calls.CallShared
+import PyAstLean.PyGens.Calls.SpecialCalls
 
 open Lean Meta Elab Term Qq Std
 
