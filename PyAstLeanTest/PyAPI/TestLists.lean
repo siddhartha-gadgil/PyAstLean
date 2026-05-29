@@ -28,15 +28,15 @@ open PyAstLean
 
 /-- info: 1 -/
 #guard_msgs in
-#eval pyIndex ["red", "blue", "green"] "blue"
+#eval pyListIndex ["red", "blue", "green"] "blue"
 
 /-- info: 3 -/
 #guard_msgs in
-#eval pyCount [1, 2, 2, 3, 2] 2
+#eval pyListCount [1, 2, 2, 3, 2] 2
 
 /-- info: 0 -/
 #guard_msgs in
-#eval pyCount ["a", "b"] "z"
+#eval pyListCount ["a", "b"] "z"
 
 /-- info: [4, 3, 2, 1] -/
 #guard_msgs in

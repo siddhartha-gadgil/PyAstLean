@@ -46,11 +46,11 @@ private def itemStrings (m : Std.HashMap String Int) : List String :=
 
 /-- info: some 10 -/
 #guard_msgs in
-#eval pyGetOpt (Std.HashMap.ofList [("apple", 10), ("banana", 20)] : Std.HashMap String Int) "apple"
+#eval pyGetOpt? (Std.HashMap.ofList [("apple", 10), ("banana", 20)] : Std.HashMap String Int) "apple"
 
 /-- info: none -/
 #guard_msgs in
-#eval pyGetOpt (Std.HashMap.ofList [("apple", 10), ("banana", 20)] : Std.HashMap String Int) "pear"
+#eval pyGetOpt? (Std.HashMap.ofList [("apple", 10), ("banana", 20)] : Std.HashMap String Int) "pear"
 
 /-- info: 20 -/
 #guard_msgs in
