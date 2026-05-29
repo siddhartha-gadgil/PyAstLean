@@ -7,6 +7,8 @@ import PyAstLean.PyAPI.CommonProtocols.Sorting
 import PyAstLean.PyAPI.CommonProtocols.Count
 import PyAstLean.PyAPI.CommonProtocols.Find
 import PyAstLean.PyAPI.CommonProtocols.Index
+import PyAstLean.PyAPI.CommonProtocols.Bool
+import PyAstLean.PyAPI.CommonProtocols.AnyFunc
 
 /-!
 Intentionally extensible runtime protocols shared by several Lean datatypes.
