@@ -127,6 +127,70 @@ def _join_command_parts(parts):
     return out
 
 
+def _lean_module_path(python_module):
+    """Map a dotted Python module path to a Lean module path.
+
+    Lean requires each component of a module path to start uppercase (this is how Lean
+    resolves `import` to a file and is enforced by Mathlib's linter). We capitalize the
+    first letter of every dotted segment and leave the rest — including underscores —
+    intact, so the mapping is deterministic and reversible:
+        `mymodule`         -> `Mymodule`
+        `pkg.sub_pkg.mod`  -> `Pkg.Sub_pkg.Mod`
+    Both the importing and the defining file compute this identically, which matters
+    because we translate one file at a time and never see the other.
+    """
+    segments = [seg for seg in python_module.split(".") if seg]
+    capitalized = [seg[:1].upper() + seg[1:] for seg in segments]
+    return ".".join(capitalized)
+
+
+def _crossfile_import_lines(body):
+    """Build the Lean `import` lines for non-library cross-file imports.
+
+    Library imports (`math`, `numpy`, ...) are handled by symbol mapping and skipped here.
+    Both `import a.b` and `from a.b import f, g` become `import A.B`: a translated module
+    emits its definitions at the top level (not inside a per-file namespace), and Lean
+    makes a module's top-level definitions globally available after `import` — so no `open`
+    is needed and the imported names are already unqualified, matching Python's
+    `from ... import`. Private (`_`-prefixed) definitions stay non-importable.
+
+    Imports must appear at the very top of a Lean file, so these lines are assembled into
+    the preamble rather than emitted per-statement by the backend.
+    """
+    import_lines = []
+    seen_imports = set()
+
+    def add_import(lean_path):
+        if lean_path and lean_path not in seen_imports:
+            seen_imports.add(lean_path)
+            import_lines.append(f"import {lean_path}")
+
+    for stmt in body:
+        if not isinstance(stmt, dict):
+            continue
+        node_type = stmt.get("node_type")
+        if node_type == "Import":
+            for alias_node in stmt.get("names", []):
+                if not isinstance(alias_node, dict):
+                    continue
+                module_name = alias_node.get("name")
+                if not isinstance(module_name, str):
+                    continue
+                # `import math` etc. is library-mapped, not a cross-file Lean import.
+                if module_name.split(".")[0] in SUPPORTED_LIBRARY_IMPORTS:
+                    continue
+                add_import(_lean_module_path(module_name))
+        elif node_type == "ImportFrom":
+            module_name = stmt.get("module")
+            if not isinstance(module_name, str) or not module_name:
+                continue
+            if module_name in SUPPORTED_LIBRARY_IMPORTS:
+                continue
+            add_import(_lean_module_path(module_name))
+
+    return import_lines
+
+
 def _body_has_direct_exception_syntax(body):
     for stmt in body:
         for node in _walk_json_nodes(stmt, skip_nested_function_bodies=True):
@@ -717,15 +781,19 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
 
             body_code = _join_command_parts(code_parts)
             if imports_add:
-                preamble = "\n".join([
+                # Every `import` must precede the first command in a Lean file. We list the
+                # runtime imports, then the user's cross-file modules, then the `open`s.
+                crossfile_imports = _crossfile_import_lines(body)
+                preamble_lines = [
                     "import PyAstLean",
                     "import Libraries",
+                    *crossfile_imports,
                     "",
                     "open PyAstLean",
                     "open Libraries",
                     "",
-                ])
-                full_code = preamble + body_code
+                ]
+                full_code = "\n".join(preamble_lines) + body_code
             else:
                 full_code = body_code
             return {"result": True, f"lean_{target}": full_code}

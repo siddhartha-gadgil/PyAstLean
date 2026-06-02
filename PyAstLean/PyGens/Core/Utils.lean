@@ -271,4 +271,48 @@ def sequenceDoElems (elems : Array (TSyntax `doElem)) (fallback : TSyntax `doEle
 def noopDoElemSyntax : PygenM (TSyntax `doElem) := do
   `(doElem| let _ := ())
 
+/--
+A Python name is module-private when it starts with an underscore but is **not** a dunder.
+This matches what `from module import *` excludes:
+
+  - `foo`      → public
+  - `_foo`     → private (single-underscore "internal use" convention)
+  - `__foo`    → private (double underscore, no trailing — strong private / name-mangled)
+  - `__foo__`  → public  (dunder: `__init__`, `__name__`, ... are the public protocol)
+
+Private names map to a Lean `private def` so they cannot be imported from other modules.
+-/
+def pythonNameIsPrivate (name : String) : Bool :=
+  name.startsWith "_"
+    && name != "_"                                  -- bare `_` is the wildcard
+    && !(name.startsWith "__" && name.endsWith "__") -- `__dunder__` is public
+
+/-- Splice a `private` modifier into an existing `def`/declaration command.
+
+`private` is a `declModifiers` prefix that the parser only accepts directly before a `def`
+keyword, so we cannot wrap an already-built command. Instead we harvest the `private`
+modifier node from a throwaway declaration and swap it into the target's `declModifiers`
+slot (the first child of a `Command.declaration`). Non-declaration commands are unchanged. -/
+def makeCommandPrivate (cmd : TSyntax `command) : PygenM (TSyntax `command) := do
+  let template ← `(command| private def __pyastlean_priv_tmpl := ())
+  let privMods := match template.raw with
+    | .node _ ``Lean.Parser.Command.declaration #[mods, _] => mods
+    | _ => Syntax.missing
+  match cmd.raw with
+  | .node info ``Lean.Parser.Command.declaration #[_oldMods, decl] =>
+      return ⟨.node info ``Lean.Parser.Command.declaration #[privMods, decl]⟩
+  | _ => return cmd
+
+/--
+Prefix a top-level `def` command with `private` when its Python `name` follows the
+leading-underscore privacy convention, so it cannot be imported from other modules
+(matching Python's intent). Names are otherwise preserved verbatim (`_foo` stays `_foo`).
+Null-node command wrappers (multiple commands) are returned unchanged.
+-/
+def applyPrivacy (name : String) (cmd : TSyntax `command) : PygenM (TSyntax `command) := do
+  if pythonNameIsPrivate name && !cmd.raw.isOfKind nullKind then
+    makeCommandPrivate cmd
+  else
+    pure cmd
+
 end PyAstLean

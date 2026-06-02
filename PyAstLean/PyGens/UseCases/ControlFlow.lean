@@ -188,13 +188,14 @@ def reexportCommands (json : Json) (resultIdent : TSyntax `ident) (names : Array
   let n := names.size
   if n == 1 then
     let nameIdent := mkIdent (blockReexportName json names[0]!).toName
-    pure #[← `(command| def $nameIdent := $resultIdent)]
+    -- Privacy keys on the original Python name, not the (possibly versioned) re-export id.
+    pure #[← applyPrivacy names[0]! (← `(command| def $nameIdent := $resultIdent))]
   else
     let mut cmds := #[]
     for i in List.range n do
       let nameIdent := mkIdent (blockReexportName json names[i]!).toName
       let acc ← tupleAccessTerm resultIdent i n
-      cmds := cmds.push (← `(command| def $nameIdent := $acc))
+      cmds := cmds.push (← applyPrivacy names[i]! (← `(command| def $nameIdent := $acc)))
     pure cmds
 
 /-- Build `mut` prelude bindings that bind each mutated `name` to its projection of

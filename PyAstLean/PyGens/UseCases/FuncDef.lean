@@ -241,12 +241,14 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
           s!"FuncDef node does not have a 'name' field or it is not a string: {json}"
         let nameIdent := mkIdent name.toName
         let argInfos ← functionArgInfos json
-        match ← functionCommandWithEffectSignature? nameIdent argInfos json with
-        | some cmd => pure cmd
-        | none =>
-            let bodyElems ← functionBodyElems json
-            let valueStx ← functionValueSyntax argInfos bodyElems
-            `(def $nameIdent := $valueStx)
+        let cmd ← match ← functionCommandWithEffectSignature? nameIdent argInfos json with
+          | some cmd => pure cmd
+          | none =>
+              let bodyElems ← functionBodyElems json
+              let valueStx ← functionValueSyntax argInfos bodyElems
+              `(def $nameIdent := $valueStx)
+        -- Python's leading-underscore convention (`def _foo`) maps to a Lean `private def`.
+        applyPrivacy name cmd
     | `term, json => do
         let argInfos ← functionArgInfos json
         let bodyElems ← functionBodyElems json

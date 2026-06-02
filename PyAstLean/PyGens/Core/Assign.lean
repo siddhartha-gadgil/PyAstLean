@@ -76,17 +76,18 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
             let n := idents.size
             let valueStx ← getCode value `term
             let unpackTmpIdent := mkIdent (Name.mkSimple s!"__py_unpack_{idents.toList.map (·.getId.toString) |> String.intercalate "_"}")
-            let cmd0 ← `(command| def $unpackTmpIdent := $valueStx)
+            -- The unpack temporary is always private (an implementation detail).
+            let cmd0 ← makeCommandPrivate (← `(command| def $unpackTmpIdent := $valueStx))
             let mut cmds : Array (TSyntax `command) := #[cmd0]
             for i in List.range n do
               let acc ← tupleAccessTerm unpackTmpIdent i n
-              let cmd ← `(command| def $(idents[i]!) := $acc)
+              let cmd ← applyPrivacy idents[i]!.getId.toString (← `(command| def $(idents[i]!) := $acc))
               cmds := cmds.push cmd
             pure ⟨mkNullNode (cmds.map TSyntax.raw)⟩
         | none => do
             let nameIdent ← getCode target `ident
             let valueStx ← getCode value `term
-            `(def $nameIdent := $valueStx)
+            applyPrivacy nameIdent.getId.toString (← `(def $nameIdent := $valueStx))
     | `doElem, json => do
         let .ok target := json.getObjVal? "target" | throwError
           s!"Assign node does not have a 'target' field or it is not a JSON value: {json}"
