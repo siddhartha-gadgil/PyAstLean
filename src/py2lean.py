@@ -421,6 +421,228 @@ def annotate_library_imports(module_json):
     if isinstance(module_json, dict) and module_json.get("node_type") == "Module":
         _annotate_library_imports_in_scope(module_json.get("body", []))
 
+
+# ---------------------------------------------------------------------------
+# Top-level state threading
+#
+# Lean has no top-level statement execution: a bare `if`/`for`/`while`/`match`
+# at module scope cannot mutate a module global the way Python does. We instead
+# treat each such top-level block as a *state transformer* over the names it
+# mutates. This pass computes, for every top-level executable block, the set of
+# names it assigns ("mutated_names"), so the Lean backend can lower the block to
+# a value that returns the updated names and re-export each as a fresh `def`.
+#
+# We only ANNOTATE here (Python is good at write-set analysis); the Lean backend
+# decides how to emit the fold / tuple-if / re-export syntax.
+# ---------------------------------------------------------------------------
+
+ASSIGNMENT_NODE_TYPES = {"Assign", "AnnAssign", "AugAssign"}
+EXECUTABLE_BLOCK_NODE_TYPES = {"If", "For", "While", "Match", "Try"}
+TOP_LEVEL_DECL_NODE_TYPES = {"FunctionDef", "Import", "ImportFrom", "Comment", "DocString"}
+
+
+def _target_assigned_names(target):
+    """Collect the Name ids written by an assignment/loop target (handles tuple unpacking)."""
+    names = set()
+    if not isinstance(target, dict):
+        return names
+    node_type = target.get("node_type")
+    if node_type == "Name":
+        ident = target.get("id")
+        if isinstance(ident, str):
+            names.add(ident)
+    elif node_type in {"Tuple", "List"}:
+        for elt in target.get("elts", []):
+            names.update(_target_assigned_names(elt))
+    # Subscript / Attribute targets (e.g. xs[0] = ...) do not bind a fresh name.
+    return names
+
+
+def _block_mutated_names(body):
+    """Compute the set of plain names assigned anywhere within a statement list.
+
+    Recurses into nested executable blocks so an outer block reports every name
+    its sub-statements mutate. Does not descend into nested FunctionDef/Lambda
+    bodies: those introduce their own scope and do not mutate module globals via
+    plain assignment.
+    """
+    mutated = set()
+    if not isinstance(body, list):
+        return mutated
+    for stmt in body:
+        if not isinstance(stmt, dict):
+            continue
+        node_type = stmt.get("node_type")
+        if node_type in {"Assign", "AnnAssign"}:
+            mutated.update(_target_assigned_names(stmt.get("target")))
+        elif node_type == "AugAssign":
+            mutated.update(_target_assigned_names(stmt.get("target")))
+        elif node_type == "For":
+            # The loop variable is local to the loop, not a re-exported global,
+            # but names mutated inside the body are.
+            mutated.update(_block_mutated_names(stmt.get("body", [])))
+            mutated.update(_block_mutated_names(stmt.get("orelse", [])))
+        elif node_type == "While":
+            mutated.update(_block_mutated_names(stmt.get("body", [])))
+            mutated.update(_block_mutated_names(stmt.get("orelse", [])))
+        elif node_type == "If":
+            mutated.update(_block_mutated_names(stmt.get("body", [])))
+            mutated.update(_block_mutated_names(stmt.get("orelse", [])))
+        elif node_type == "Match":
+            for case in stmt.get("cases", []):
+                if isinstance(case, dict):
+                    mutated.update(_block_mutated_names(case.get("body", [])))
+        elif node_type == "Try":
+            mutated.update(_block_mutated_names(stmt.get("body", [])))
+            mutated.update(_block_mutated_names(stmt.get("orelse", [])))
+            mutated.update(_block_mutated_names(stmt.get("finalbody", [])))
+            for handler in stmt.get("handlers", []):
+                if isinstance(handler, dict):
+                    mutated.update(_block_mutated_names(handler.get("body", [])))
+    return mutated
+
+
+def _plain_assign_name(stmt):
+    """Return the single Name id a top-level `x = ...` binds, or None for other shapes."""
+    if not (isinstance(stmt, dict) and stmt.get("node_type") == "Assign"):
+        return None
+    target = stmt.get("target")
+    if isinstance(target, dict) and target.get("node_type") == "Name":
+        return target.get("id")
+    return None
+
+
+class ToplevelStateError(Exception):
+    """Raised when top-level state threading hits a case the block-local model rejects."""
+
+
+def annotate_toplevel_state(module_json):
+    """Annotate top-level executable blocks for state threading (block-local model).
+
+    For each top-level `if`/`for`/`while`/`match`/`try` that mutates module names,
+    we record `mutated_names` and a `state_init` map: the identifier the Lean
+    backend should read for each name's pre-block value. When a mutated name was
+    bound by an earlier top-level `x = ...`, that assignment is versioned (its
+    target becomes `x<U+2080>`) so the clean name `x` can be re-exported with the
+    block's result, avoiding Lean's immutable-`def` redefinition error.
+
+    Scope (block-local): a name may be mutated by at most one top-level block, and
+    a pre-block initializer may be assigned at most once. Anything outside this is
+    rejected with a clear error rather than miscompiled.
+    """
+    if not (isinstance(module_json, dict) and module_json.get("node_type") == "Module"):
+        return
+    body = module_json.get("body", [])
+
+    # Map each plain top-level assignment name -> the (single) Assign node, and
+    # track how many times it has been (re)assigned at top level.
+    init_assign = {}
+    assign_count = {}
+    for stmt in body:
+        name = _plain_assign_name(stmt)
+        if name is not None:
+            init_assign[name] = stmt
+            assign_count[name] = assign_count.get(name, 0) + 1
+
+    already_mutated = set()
+    for stmt in body:
+        if not (isinstance(stmt, dict) and stmt.get("node_type") in EXECUTABLE_BLOCK_NODE_TYPES):
+            continue
+        all_mutated = _block_mutated_names([stmt])
+        # Only names with a module-scope initializer are threaded globals. Names
+        # assigned solely inside the block (e.g. tuple-unpack temporaries the
+        # annotator introduced) are block-local and stay inside the lowering.
+        mutated = sorted(name for name in all_mutated if name in init_assign)
+        if not mutated:
+            continue
+        stmt["mutated_names"] = mutated
+
+        state_init = {}
+        for name in mutated:
+            if name in already_mutated:
+                raise ToplevelStateError(
+                    f"top-level name '{name}' is mutated by more than one block; "
+                    f"this is not supported yet (block-local state threading only)."
+                )
+            if assign_count.get(name, 0) > 1:
+                raise ToplevelStateError(
+                    f"top-level name '{name}' is assigned more than once before a "
+                    f"mutating block; this is not supported yet."
+                )
+            # Version the initializer so the clean name is free for re-export.
+            init_stmt = init_assign[name]
+            versioned = f"{name}₀"  # name + subscript zero
+            init_stmt["target"]["id"] = versioned
+            state_init[name] = versioned
+        stmt["state_init"] = state_init
+        already_mutated.update(mutated)
+
+
+def _is_main_guard_test(test):
+    """Recognize the JSON for `__name__ == "__main__"`."""
+    if not (isinstance(test, dict) and test.get("node_type") == "Compare"):
+        return False
+    if test.get("op") != "eq":
+        return False
+    left, right = test.get("left"), test.get("right")
+    if not (isinstance(left, dict) and isinstance(right, dict)):
+        return False
+    left_is_name = left.get("node_type") == "Name" and left.get("id") == "__name__"
+    right_is_main = (
+        right.get("node_type") == "Constant" and right.get("value") == "__main__"
+    )
+    return left_is_name and right_is_main
+
+
+def _rename_name_refs(node, old, new):
+    """Rewrite every `Name` with id `old` to `new` throughout a JSON subtree."""
+    if isinstance(node, dict):
+        if node.get("node_type") == "Name" and node.get("id") == old:
+            node["id"] = new
+        for value in node.values():
+            _rename_name_refs(value, old, new)
+    elif isinstance(node, list):
+        for item in node:
+            _rename_name_refs(item, old, new)
+
+
+def annotate_main_entrypoint(module_json):
+    """Resolve the Python/Lean `main` naming collision and mark the `__main__` guard.
+
+    - A top-level `def main()` with NO guard keeps the name `main` (importable).
+    - A `__main__` guard with NO `def main` becomes Lean's `main` (the guard body).
+    - When BOTH exist, the Python `def main` is renamed to `_main` (plus all
+      references) so the guard can own Lean's entry-point name `main`.
+    The guard node is tagged `is_main_guard` so the backend lowers it to `main`.
+    """
+    if not (isinstance(module_json, dict) and module_json.get("node_type") == "Module"):
+        return
+    body = module_json.get("body", [])
+
+    has_main_def = any(
+        isinstance(s, dict) and s.get("node_type") == "FunctionDef" and s.get("name") == "main"
+        for s in body
+    )
+    guard = next(
+        (
+            s for s in body
+            if isinstance(s, dict) and s.get("node_type") == "If"
+            and _is_main_guard_test(s.get("test"))
+        ),
+        None,
+    )
+
+    if guard is not None:
+        guard["is_main_guard"] = True
+        if has_main_def:
+            # Collision: the Python `main` function yields the name to the guard.
+            # Rewrite every reference (call sites) `main` -> `_main` ...
+            _rename_name_refs(module_json, "main", "_main")
+            # ... and the FunctionDef's own name, which is a plain field, not a Name node.
+            for s in body:
+                if isinstance(s, dict) and s.get("node_type") == "FunctionDef" and s.get("name") == "main":
+                    s["name"] = "_main"
+
 def translate_to_json(source_code, filepath=None):
     """
     Parses Python source code and translates it to a JSON IR.
@@ -448,6 +670,8 @@ def translate_to_json(source_code, filepath=None):
     annotate_library_imports(data)
     annotate_exception_effects(data)
     annotate_io_effects(data)
+    annotate_main_entrypoint(data)
+    annotate_toplevel_state(data)
     logger.debug("Generated JSON IR: %s", json.dumps(data))
     return json.dumps(data)
 
@@ -636,7 +860,7 @@ class LeanBackendClient:
         try:
             return json.loads(response_line)
         except json.JSONDecodeError as err:
-            logger.debug("Persistent Lean backend returned invalid JSON; retrying one-shot.")
+            logger.debug(f"Persistent Lean backend returned invalid JSON; retrying one-shot: {err}")
             self.close()
             return self._one_shot_request(ast_json, target, check)
 

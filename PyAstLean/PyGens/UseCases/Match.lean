@@ -1,4 +1,5 @@
 import PyAstLean.PyGens.Core.Utils
+import PyAstLean.PyGens.UseCases.ControlFlow
 
 open Lean Meta Elab Term Qq Std
 
@@ -309,6 +310,15 @@ def matchSyntax : (kind : SyntaxNodeKind) → Json →
           s!"Match node does not have a 'cases' field or it is not a JSON array: {json}"
         let subjectTerm ← getCode subjectJson `term
         matchCaseDoElemSyntax subjectTerm casesJson.toList
+    | `command, json => do
+        -- A top-level `match` that mutates module globals is a state transformer.
+        match blockMutatedNames? json with
+        | some names =>
+            let cmds ← topLevelStmtCommands json names `__py_match "match-block"
+            return ⟨mkNullNode (cmds.map TSyntax.raw)⟩
+        | none =>
+            throwError "Top-level `match` is only supported when it mutates a module global \
+              (state threading)."
     | _, _ => throwError s!"Unsupported syntax category for Match node"
 
 end PyAstLean

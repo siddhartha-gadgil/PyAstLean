@@ -308,6 +308,13 @@ class Lean4Annotator(cst.CSTTransformer):
                 return []
             names.append(element.value)
 
+        # When the RHS is a tuple/list literal of matching arity (e.g. `a, b = b, a`),
+        # leave the native unpacking intact: the Lean backend lowers it directly through
+        # `Prod.fst`/`Prod.snd`, which is correct for tuples. Expanding to `tmp[i]`
+        # subscripts would mis-lower as list indexing on a tuple value.
+        if isinstance(value, (cst.Tuple, cst.List)) and len(value.elements) == len(names):
+            return []
+
         self.unpack_counter += 1
         temp_name = f"__py_unpack{self.unpack_counter}"
         split_lines: list[cst.BaseStatement] = [
@@ -1144,6 +1151,7 @@ def annotate_file(file_path: str, write_back: bool = True) -> str:
             .replace("List[", "list[")
             .replace("Dict[", "dict[")
             .replace("Tuple[", "tuple[")
+            .replace("Variable", "Any")
         )
         # if not code.startswith("from __future__ import annotations"):
         #     code = f"from __future__ import annotations\n\n{code}"

@@ -257,6 +257,16 @@ def getCodeCore (json: Json) (kind: SyntaxNodeKind) (checkCode : Bool := true) :
     let codeElab := code.run' {}
     let codeMeta := codeElab.run' {} {}
     let codeCore ← codeMeta.run' {} {}
+    -- A pygen may return several commands wrapped in a null node (e.g. tuple-assign
+    -- re-exports or top-level state-threading folds). Pretty-print each child and
+    -- join them, since `ppCategory` cannot render a raw null node.
+    if kind == `command && codeCore.raw.isOfKind nullKind then
+      let mut fmts : Array Format := #[]
+      for arg in codeCore.raw.getArgs do
+        let child : TSyntax `command := ⟨arg⟩
+        let childFmt ← PrettyPrinter.ppCategory `command child
+        fmts := fmts.push childFmt
+      return .ok (Format.joinSep fmts.toList "\n\n")
     let fmt ← PrettyPrinter.ppCategory kind codeCore
     return .ok fmt
   catch e =>
