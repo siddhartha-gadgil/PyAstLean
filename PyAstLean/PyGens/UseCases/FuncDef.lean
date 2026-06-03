@@ -125,9 +125,14 @@ partial def jsonReferencesName (json : Json) (target : String) : Bool :=
 
 /-- Build the Lean value for a Python function body, using a pure term when possible and
 falling back to `do` notation for effectful bodies. This helper is reused for top-level
-definitions, nested local functions, and `Head_FunctionDef` threading. -/
+definitions, nested local functions, and `Head_FunctionDef` threading.
+
+The body is lowered against a fresh variable set (`withFreshVariables`) so locals declared
+inside a nested function do not leak into the enclosing scope's `let`/`let mut` tracking — a
+leak would otherwise cause a later same-named outer assignment to be emitted as a reassignment
+of a variable that was never declared `let mut`. -/
 def functionValueSyntax (argInfos : Array (TSyntax `ident × Option (TSyntax `term))) (bodyElems : Array Json) :
-    PygenM (TSyntax `term) := do
+    PygenM (TSyntax `term) := withFreshVariables do
   let usesExceptions := bodyNeedsExceptionMonad bodyElems
   let usesIO := !usesExceptions && bodyNeedsIOMonad bodyElems
   let mkLambda (body : TSyntax `term) : PygenM (TSyntax `term) := do

@@ -83,20 +83,34 @@ def augAssignSyntax : (kind : SyntaxNodeKind) → Json →
           s!"AugAssign node does not have an 'op' field or it is not a string: {json}"
         let .ok valueJson := json.getObjValAs? Json "value" | throwError
           s!"AugAssign node does not have a 'value' field or it is not a JSON value: {json}"
-        let targetIdent ← getCode targetJson `ident
         let valueCode ← getCode valueJson `term
+        -- The current value: for a Name target this is the variable; for a subscript target
+        -- `s[i]` it is the element read, so `s[i] += v` works on both.
+        let curTerm ← getCode targetJson `term
         let updated ← match op with
-          | "add" => `($targetIdent +ₚ $valueCode)
-          | "sub" => `($targetIdent -ₚ $valueCode)
-          | "mul" => `($targetIdent *ₚ $valueCode)
-          | "div" => `($targetIdent /ₚ $valueCode)
-          | "mod" => `($targetIdent %ₚ $valueCode)
-          | "pow" => `($targetIdent ^ₚ $valueCode)
+          | "add" => `($curTerm +ₚ $valueCode)
+          | "sub" => `($curTerm -ₚ $valueCode)
+          | "mul" => `($curTerm *ₚ $valueCode)
+          | "div" => `($curTerm /ₚ $valueCode)
+          | "mod" => `($curTerm %ₚ $valueCode)
+          | "pow" => `($curTerm ^ₚ $valueCode)
           | "floordiv" =>
               let floorDivIdent := mkIdent ``PyAstLean.pyFloorDiv
-              `($floorDivIdent $targetIdent $valueCode)
+              `($floorDivIdent $curTerm $valueCode)
+          -- AUGASSIGN_MAP spells bitwise ops `and`/`or`/`xor` (vs BINOP's `bitand`/...).
+          | "and" => `($(mkIdent ``PyAstLean.pyBitAnd) $curTerm $valueCode)
+          | "or" => `($(mkIdent ``PyAstLean.pyBitOr) $curTerm $valueCode)
+          | "xor" => `($(mkIdent ``PyAstLean.pyBitXor) $curTerm $valueCode)
+          | "lshift" => `($(mkIdent ``PyAstLean.pyShiftLeft) $curTerm $valueCode)
+          | "rshift" => `($(mkIdent ``PyAstLean.pyShiftRight) $curTerm $valueCode)
           | _ => throwError s!"Unsupported augmented assignment operator: {op}"
-        `(doElem| $targetIdent:ident := $updated)
+        match ← subscriptTargetParts? targetJson with
+        | some (containerIdent, indexTerm) =>
+            -- `s[i] += v` rebuilds the container with the updated element.
+            subscriptSetDoElem containerIdent indexTerm updated
+        | none =>
+            let targetIdent ← getCode targetJson `ident
+            `(doElem| $targetIdent:ident := $updated)
     | _, _ => throwError s!"Unsupported syntax category for AugAssign node"
 
 /-- Lower a for-loop target into a binder and optional destructuring prelude. -/
@@ -221,7 +235,7 @@ def stateRunBlock (prelude : Array (TSyntax `doElem)) (bodyElems : Array Json)
     (names : Array String) : PygenM (TSyntax `term) := do
   let mut doElems := prelude
   for elem in bodyElems do
-    doElems := doElems.push (← getCode elem `doElem)
+    doElems := appendDoElems doElems (← getCode elem `doElem)
   let returnTuple ← buildNameTuple (names.map (mkIdent ·.toName))
   doElems := doElems.push (← `(doElem| return $returnTuple))
   let idRunIdent := mkIdent ``Id.run
@@ -324,7 +338,7 @@ def whileSyntax : (kind : SyntaxNodeKind) → Json →
         let mut bodyStxArray := #[]
         for elem in bodyElems do
             let elemStx ← getCode elem `doElem
-            bodyStxArray := bodyStxArray.push elemStx
+            bodyStxArray := appendDoElems bodyStxArray elemStx
         `(doElem| while $testStx do
             $[$bodyStxArray:doElem]*)
     | `command, json => do
@@ -358,7 +372,7 @@ def forSyntax : (kind : SyntaxNodeKind) → Json →
         let mut bodyStxArray := preludeElems
         for elem in bodyElems do
           let elemStx ← getCode elem `doElem
-          bodyStxArray := bodyStxArray.push elemStx
+          bodyStxArray := appendDoElems bodyStxArray elemStx
         `(doElem| for $targetIdent:ident in $iterCode do
             $[$bodyStxArray:doElem]*)
     | `command, json => do
@@ -385,11 +399,11 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         let mut bodyStxArray := #[]
         for elem in bodyElems do
           let elemStx ← getCode elem `doElem
-          bodyStxArray := bodyStxArray.push elemStx
+          bodyStxArray := appendDoElems bodyStxArray elemStx
         let mut orelseStxArray := #[]
         for elem in orelseElems do
           let elemStx ← getCode elem `doElem
-          orelseStxArray := orelseStxArray.push elemStx
+          orelseStxArray := appendDoElems orelseStxArray elemStx
         if orelseStxArray.isEmpty then
           let noop ← noopDoElemSyntax
           `(doElem| if $testStx then
@@ -420,7 +434,7 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         let mut bodyStxArray := #[]
         for elem in bodyElems do
           let elemStx ← getCode elem `doElem
-          bodyStxArray := bodyStxArray.push elemStx
+          bodyStxArray := appendDoElems bodyStxArray elemStx
         let mainIdent := mkIdent `main
         if bodyNeedsExceptionMonad bodyElems then
           let exceptIdent := mkIdent ``PyAstLean.PyExcept

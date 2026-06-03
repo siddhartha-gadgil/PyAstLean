@@ -139,7 +139,7 @@ partial def tryBranchBodySyntax (bodyElems : Array Json) : PygenM (Array (TSynta
       else
         withoutCheck do
           getCode elem `doElem
-    bodyStxArray := bodyStxArray.push elemStx
+    bodyStxArray := appendDoElems bodyStxArray elemStx
     if statementDefinitelyReturns elem then
       break
   return bodyStxArray

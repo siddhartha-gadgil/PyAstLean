@@ -199,9 +199,10 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                 throwError s!"print() keyword argument '{kwName}' is not supported yet."
             return ← buildIOActionApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
               let pyPrintIOIdent := mkIdent ``pyPrintIO
+              let printArgs ← wrapPrintArgs resolvedArgs
               match keyWordsMap.get? "sep", keyWordsMap.get? "end" with
               | none, none =>
-                  `($pyPrintIOIdent [$resolvedArgs,*])
+                  `($pyPrintIOIdent [$printArgs,*])
               | _, _ =>
                   let sepCode ← match keyWordsMap.get? "sep" with
                     | some sepJson => getCode sepJson `term
@@ -209,7 +210,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                   let endCode ← match keyWordsMap.get? "end" with
                     | some endJson => getCode endJson `term
                     | none => `("\n")
-                  `($pyPrintIOIdent [$resolvedArgs,*] $sepCode $endCode)
+                  `($pyPrintIOIdent [$printArgs,*] $sepCode $endCode)
         | .ok "Name", .ok "input" => do
             unless keyWordsMap.isEmpty do
               throwError "input() keyword arguments are not supported yet."
@@ -392,9 +393,10 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                 throwError s!"print() keyword argument '{kwName}' is not supported yet."
             let t ← buildIOActionApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
               let pyPrintIOIdent := mkIdent ``pyPrintIO
+              let printArgs ← wrapPrintArgs resolvedArgs
               match keyWordsMap.get? "sep", keyWordsMap.get? "end" with
               | none, none =>
-                  `($pyPrintIOIdent [$resolvedArgs,*])
+                  `($pyPrintIOIdent [$printArgs,*])
               | _, _ =>
                   let sepCode ← match keyWordsMap.get? "sep" with
                     | some sepJson => getCode sepJson `term
@@ -402,7 +404,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                   let endCode ← match keyWordsMap.get? "end" with
                     | some endJson => getCode endJson `term
                     | none => `("\n")
-                  `($pyPrintIOIdent [$resolvedArgs,*] $sepCode $endCode)
+                  `($pyPrintIOIdent [$printArgs,*] $sepCode $endCode)
             return ← `(doElem| let _ ← $t:term)
         | .ok "Name", .ok "input" => do
             unless keyWordsMap.isEmpty do

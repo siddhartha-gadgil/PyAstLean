@@ -1,4 +1,5 @@
 import PyAstLean.PyAPI.CommonProtocols.Length
+import PyAstLean.PyAPI.CommonProtocols.SetItem
 import PyAstLean.PyAPI.CommonProtocols.Membership
 import PyAstLean.PyAPI.CommonProtocols.Iterable
 import PyAstLean.PyAPI.CommonProtocols.Clear

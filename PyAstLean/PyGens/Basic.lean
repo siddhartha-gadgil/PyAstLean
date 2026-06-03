@@ -207,6 +207,11 @@ def binOpSyntax : (kind : SyntaxNodeKind) → Json →
         `($floorDivIdent $leftCode $rightCode)
     | "pow" => `($leftCode ^ₚ $rightCode)
     | "mod" => `($leftCode %ₚ $rightCode)
+    | "bitand" => `($(mkIdent ``PyAstLean.pyBitAnd) $leftCode $rightCode)
+    | "bitor" => `($(mkIdent ``PyAstLean.pyBitOr) $leftCode $rightCode)
+    | "bitxor" => `($(mkIdent ``PyAstLean.pyBitXor) $leftCode $rightCode)
+    | "lshift" => `($(mkIdent ``PyAstLean.pyShiftLeft) $leftCode $rightCode)
+    | "rshift" => `($(mkIdent ``PyAstLean.pyShiftRight) $leftCode $rightCode)
     | _ => throwError s!"Unsupported binary operator: {op}"
   | _, _ => throwError s!"Unsupported syntax category for BinOp node"
 
@@ -270,6 +275,10 @@ def compareSyntax : (kind : SyntaxNodeKind) → Json →
     match op with
     | "eq" => `($leftCode == $rightCode)
     | "ne" => `($leftCode != $rightCode)
+    -- `is`/`is not` are identity in Python; for the dominant `x is None` idiom equality is
+    -- the right approximation, so we lower them like `==`/`!=`.
+    | "is" => `($leftCode == $rightCode)
+    | "isnot" => `($leftCode != $rightCode)
     | "lt" => `($leftCode < $rightCode)
     | "le" => `($leftCode <= $rightCode)
     | "gt" => `($leftCode > $rightCode)

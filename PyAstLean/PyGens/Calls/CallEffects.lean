@@ -7,6 +7,18 @@ open Lean Meta Elab Term Qq Std
 
 namespace PyAstLean
 
+/-- Wrap each `print(...)` argument as `PyPrintArg.mk (pyStringify arg)`.
+
+We do this explicitly instead of relying on the `CoeOut` into a `List PyPrintArg` literal:
+the coercion pushes the expected element type `PyPrintArg` into each argument, which breaks
+polymorphic argument terms such as `pyListGetItem a i` (the element type unifies with
+`PyPrintArg`, then demands `Inhabited PyPrintArg`). Applying `pyStringify` lets each argument
+elaborate at its natural type first; the result is identical for fixed-type arguments. -/
+def wrapPrintArgs (resolvedArgs : Array (TSyntax `term)) : PygenM (Array (TSyntax `term)) := do
+  let printArgIdent := mkIdent ``PyAstLean.PyPrintArg.mk
+  let stringifyIdent := mkIdent ``PyAstLean.pyStringify
+  resolvedArgs.mapM fun a => `($printArgIdent ($stringifyIdent $a))
+
 /-- Local copy of the exception-effect probe so call lowering can avoid cyclic imports. -/
 partial def basicJsonUsesExceptionEffect (json : Json) : Bool :=
   let directMatches :=
@@ -240,9 +252,10 @@ partial def hoistIOTerm (json : Json) : PygenM (Array (TSyntax `doElem) × TSynt
             else
               resolvedArgs := resolvedArgs.push (← getCode argJson `term)
           let pyPrintIOIdent := mkIdent ``pyPrintIO
+          let printArgs ← wrapPrintArgs resolvedArgs
           let action ← match keyWordsMap.get? "sep", keyWordsMap.get? "end" with
             | none, none =>
-                `($pyPrintIOIdent [$resolvedArgs,*])
+                `($pyPrintIOIdent [$printArgs,*])
             | _, _ =>
                 let sepCode ← match keyWordsMap.get? "sep" with
                   | some sepJson => getCode sepJson `term
@@ -250,7 +263,7 @@ partial def hoistIOTerm (json : Json) : PygenM (Array (TSyntax `doElem) × TSynt
                 let endCode ← match keyWordsMap.get? "end" with
                   | some endJson => getCode endJson `term
                   | none => `("\n")
-                `($pyPrintIOIdent [$resolvedArgs,*] $sepCode $endCode)
+                `($pyPrintIOIdent [$printArgs,*] $sepCode $endCode)
           let binder := mkIdent (s!"__py_print{bindings.size}").toName
           let finalBindings := bindings.push (← `(doElem| let $binder:ident ← $action:term))
           return (finalBindings, binder)

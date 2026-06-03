@@ -26,6 +26,19 @@ def appendCommandSyntax (cmds : Array (TSyntax `command)) (cmd : TSyntax `comman
   else
     cmds.push cmd
 
+/--
+Append one generated `doElem` into an accumulator, flattening null-node wrappers that
+represent "many doElems" from a lowering that produced several sibling statements (e.g.
+tuple-unpack assignment). Flattening keeps the bindings as siblings in the enclosing `do`
+rather than scoping them inside a nested `do` block.
+-/
+def appendDoElems (elems : Array (TSyntax `doElem)) (elem : TSyntax `doElem) :
+    Array (TSyntax `doElem) :=
+  if elem.raw.isOfKind nullKind then
+    elems ++ elem.raw.getArgs.map (fun arg => ⟨arg⟩)
+  else
+    elems.push elem
+
 /-- Pick a fresh local name for generated bindings. -/
 partial def freshName (base : Name) (idx : Nat := 0) : PygenM Name := do
   let candidate :=
@@ -183,7 +196,7 @@ def monadicFunctionBodySyntax (bodyElems : Array Json) : PygenM (Array (TSyntax 
   for elem in bodyElems do
     let elemStx ← withoutCheck do
       getCode elem `doElem
-    bodyStxArray := bodyStxArray.push elemStx
+    bodyStxArray := appendDoElems bodyStxArray elemStx
     if statementDefinitelyReturns elem then
       break
   return bodyStxArray

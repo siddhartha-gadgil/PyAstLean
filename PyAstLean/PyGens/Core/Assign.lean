@@ -51,6 +51,32 @@ def unpack2Term (value : TSyntax `term) : PygenM (TSyntax `term) := do
   let pyUnpack2Ident := mkIdent ``PyAstLean.pyUnpack2
   `($pyUnpack2Ident $value)
 
+/-- Recognize a single-level subscript assignment target `name[index]`, returning the
+container ident (the `mut` variable to rebuild) and the index term. Returns `none` for
+non-subscript targets; throws a clear error for unsupported subscript shapes (nested
+subscripts, non-Name containers, slice targets). -/
+def subscriptTargetParts? (target : Json) : PygenM (Option (TSyntax `ident × TSyntax `term)) := do
+  unless jsonNodeType? target == some "Subscript" do
+    return none
+  let .ok containerJson := target.getObjValAs? Json "value" | throwError
+    s!"Subscript assignment target is missing a 'value' field: {target}"
+  let .ok sliceJson := target.getObjValAs? Json "slice" | throwError
+    s!"Subscript assignment target is missing a 'slice' field: {target}"
+  unless jsonNodeType? containerJson == some "Name" do
+    throwError "Only `name[index] = ...` subscript assignment (single-level, Name container) \
+      is supported."
+  if jsonNodeType? sliceJson == some "Slice" then
+    throwError "Slice assignment (`s[a:b] = ...`) is not supported yet."
+  let containerIdent ← getCode containerJson `ident
+  let indexTerm ← getCode sliceJson `term
+  return some (containerIdent, indexTerm)
+
+/-- Emit `container := pySetItem container index value` for a subscript item assignment. -/
+def subscriptSetDoElem (containerIdent : TSyntax `ident) (indexTerm value : TSyntax `term) :
+    PygenM (TSyntax `doElem) := do
+  let setItemIdent := mkIdent ``PyAstLean.pySetItem
+  `(doElem| $containerIdent:ident := $setItemIdent $containerIdent $indexTerm $value)
+
 /-- Simple returned expressions can stay unparenthesized; more complex or effectful ones
 keep parentheses so Lean parses multiline `return` expressions reliably. -/
 def shouldParenthesizeReturnValue (value : Json) : Bool :=
@@ -85,6 +111,10 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
               cmds := cmds.push cmd
             pure ⟨mkNullNode (cmds.map TSyntax.raw)⟩
         | none => do
+            if jsonNodeType? target == some "Subscript" then
+              throwError "Top-level subscript assignment (`s[i] = ...`) is not supported; \
+                it mutates a global, which has no top-level form. Move it into a function \
+                or an `if __name__ == \"__main__\"` block."
             let nameIdent ← getCode target `ident
             let valueStx ← getCode value `term
             applyPrivacy nameIdent.getId.toString (← `(def $nameIdent := $valueStx))
@@ -109,10 +139,11 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
             for i in List.range n do
               let acc ← tupleAccessTerm unpackTmpIdent i n
               binds := binds.push (← bindOrAssignLocal idents[i]! acc)
-            `(doElem| do
-              $[$binds:doElem]*)
+            -- Return the bindings as siblings (a flattened null-node), NOT wrapped in a
+            -- nested `do` — wrapping would scope the unpacked names away from following
+            -- statements. Consumers flatten via `appendDoElems`.
+            pure ⟨mkNullNode (binds.map TSyntax.raw)⟩
         | none => do
-            let nameIdent ← getCode target `ident
             let rhs ←
               if jsonUsesIOEffect value then
                 inlineIOTerm value
@@ -122,7 +153,13 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
                   `((← $valueStx))
                 else
                   pure valueStx
-            bindOrAssignLocal nameIdent rhs
+            match ← subscriptTargetParts? target with
+            | some (containerIdent, indexTerm) =>
+                -- `s[i] = v` rebuilds the list/dict and reassigns the variable.
+                subscriptSetDoElem containerIdent indexTerm rhs
+            | none =>
+                let nameIdent ← getCode target `ident
+                bindOrAssignLocal nameIdent rhs
     | _, _ => throwError s!"Unsupported syntax category for Assign node"
 
 /--

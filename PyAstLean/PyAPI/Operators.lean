@@ -53,6 +53,14 @@ instance : PyHMul String Int String where
     else
       String.intercalate "" (List.replicate n.toNat s)
 
+/-- Python list repetition `xs * n` (and the symmetric `n * xs`): repeats the list `n` times,
+matching `[0] * n` style array initialization. A non-positive count yields `[]`. -/
+instance {α : Type} : PyHMul (List α) Int (List α) where
+  hMul := fun xs n => if n ≤ 0 then [] else (List.replicate n.toNat xs).flatten
+
+instance {α : Type} : PyHMul Int (List α) (List α) where
+  hMul := fun n xs => if n ≤ 0 then [] else (List.replicate n.toNat xs).flatten
+
 @[default_instance]
 instance (priority := high) : PyHMul Rat Rat Rat where
   hMul := fun a b => (a : Rat) * (b : Rat)
@@ -126,5 +134,28 @@ def pyFloorDiv (a b : Int) : Int :=
     panic! "ZeroDivisionError: integer division or modulo by zero"
   else
     Int.fdiv a b
+
+/-!
+Python-style integer bitwise operators.
+
+These assume non-negative operands, which covers competitive-programming use. Python's
+infinite two's-complement semantics for negative integers is intentionally out of scope:
+operands are taken through `Int.toNat`, so a negative operand is treated as `0`.
+-/
+
+/-- Python `a & b`. -/
+def pyBitAnd (a b : Int) : Int := Int.ofNat (Nat.land a.toNat b.toNat)
+
+/-- Python `a | b`. -/
+def pyBitOr (a b : Int) : Int := Int.ofNat (Nat.lor a.toNat b.toNat)
+
+/-- Python `a ^ b` (bitwise xor). -/
+def pyBitXor (a b : Int) : Int := Int.ofNat (Nat.xor a.toNat b.toNat)
+
+/-- Python `a << b`. -/
+def pyShiftLeft (a b : Int) : Int := a * (2 ^ b.toNat)
+
+/-- Python `a >> b` (floor division by `2 ^ b`). -/
+def pyShiftRight (a b : Int) : Int := Int.fdiv a (2 ^ b.toNat)
 
 end PyAstLean

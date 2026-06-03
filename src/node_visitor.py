@@ -12,6 +12,10 @@ BINOP_MAP = {
     ast.Div: "div",
     ast.FloorDiv: "floordiv",
     ast.BitOr: "bitor",
+    ast.BitAnd: "bitand",
+    ast.BitXor: "bitxor",
+    ast.LShift: "lshift",
+    ast.RShift: "rshift",
     ast.Mod : "mod",
 }
 
@@ -35,6 +39,8 @@ COMPAREOP_MAP = {
     ast.GtE: "ge",
     ast.In: "in",
     ast.NotIn: "notin",
+    ast.Is: "is",
+    ast.IsNot: "isnot",
 }
 
 AUGASSIGN_MAP = {
