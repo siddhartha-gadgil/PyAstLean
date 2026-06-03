@@ -376,8 +376,18 @@ def forSyntax : (kind : SyntaxNodeKind) → Json →
           bodyStxArray := appendDoElems bodyStxArray elemStx
         -- Parenthesize the iterable so its last token never glues to the `do` keyword
         -- (e.g. an iterable ending in `none` would otherwise pretty-print as `nonedo`).
-        `(doElem| for $targetIdent:ident in ($iterCode) do
-            $[$bodyStxArray:doElem]*)
+        if jsonUsesIOEffect iterJson then
+          -- The iterable is IO-derived (e.g. `range(int(input()))` → `IO (List Int)`, or
+          -- `input().split()` → `IO (List String)`). Await it once into a local, then iterate
+          -- over the pure value — otherwise a raw `IO X` would flow into a pure position.
+          let itIdent := mkIdent (← freshName `__py_iter)
+          let bindIt ← `(doElem| let $itIdent:ident ← $iterCode:term)
+          let forLoop ← `(doElem| for $targetIdent:ident in ($itIdent) do
+              $[$bodyStxArray:doElem]*)
+          pure ⟨mkNullNode #[bindIt.raw, forLoop.raw]⟩
+        else
+          `(doElem| for $targetIdent:ident in ($iterCode) do
+              $[$bodyStxArray:doElem]*)
     | `command, json => do
         match blockMutatedNames? json with
         | some names =>

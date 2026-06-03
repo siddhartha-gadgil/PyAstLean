@@ -36,24 +36,20 @@ def listCompTargetLambda (targetJson : Json) (body : TSyntax `term) :
   | _ =>
       throwError s!"Unsupported comprehension target: {targetJson}"
 
-/-- Filter a generator iterable through all of its `if` clauses, after normalizing it via `pyIter`. -/
-def comprehensionIterSyntax (compJson : Json) : PygenM (TSyntax `term) := do
+/-- Apply a comprehension generator's `pyIter` normalization and `if`-clause filters to an
+already-lowered base iterable term `baseIter`. Factored out so the same logic applies whether
+the iterable is pure or has been awaited from an `IO` action. -/
+def comprehensionFilterOver (compJson : Json) (baseIter : TSyntax `term) : PygenM (TSyntax `term) := do
   let .ok targetJson := compJson.getObjValAs? Json "target" | throwError
     s!"comprehension node does not have a 'target' field: {compJson}"
   let .ok iterJson := compJson.getObjValAs? Json "iter" | throwError
     s!"comprehension node does not have an 'iter' field: {compJson}"
   let .ok ifsJson := compJson.getObjValAs? Json "ifs" | throwError
     s!"comprehension node does not have an 'ifs' field: {compJson}"
-  let rawIterCode ← getCode iterJson `term
   let iterCode ←
     match jsonNodeType? iterJson with
-    | some "BinOp" => do
-        let pyIterIdent := mkIdent ``pyIter
-        `($pyIterIdent $rawIterCode)
-    | some "Constant" => do
-        let pyIterIdent := mkIdent ``pyIter
-        `($pyIterIdent $rawIterCode)
-    | _ => pure rawIterCode
+    | some "BinOp" | some "Constant" => `($(mkIdent ``pyIter) $baseIter)
+    | _ => pure baseIter
   let ifTerms ← match ifsJson with
     | .arr arr => arr.mapM (fun ifJson => getCode ifJson `term)
     | _ => throwError s!"comprehension node 'ifs' field is not an array: {ifsJson}"
@@ -66,6 +62,12 @@ def comprehensionIterSyntax (compJson : Json) : PygenM (TSyntax `term) := do
     let predicateLambda ← listCompTargetLambda targetJson predicate
     `(List.filter $predicateLambda $iterCode)
 
+/-- Filter a generator iterable through all of its `if` clauses, after normalizing it via `pyIter`. -/
+def comprehensionIterSyntax (compJson : Json) : PygenM (TSyntax `term) := do
+  let .ok iterJson := compJson.getObjValAs? Json "iter" | throwError
+    s!"comprehension node does not have an 'iter' field: {compJson}"
+  comprehensionFilterOver compJson (← getCode iterJson `term)
+
 /-- Recursively lower a Python list/generator comprehension through all generators. -/
 def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
     PygenM (TSyntax `term) := do
@@ -76,16 +78,22 @@ def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
   | compJson :: rest => do
       let .ok targetJson := compJson.getObjValAs? Json "target" | throwError
         s!"comprehension node does not have a 'target' field: {compJson}"
-      let iterCode ← comprehensionIterSyntax compJson
+      let .ok iterJson := compJson.getObjValAs? Json "iter" | throwError
+        s!"comprehension node does not have an 'iter' field: {compJson}"
       if rest.isEmpty then
         let eltCode ← getCode eltJson `term
         let mapper ← listCompTargetLambda targetJson eltCode
-        if jsonUsesMonadicEffect eltJson then
-          let mapMIdent := mkIdent ``List.mapM
-          `($mapMIdent $mapper $iterCode)
-        else
-          `(List.map $mapper $iterCode)
+        let mapIdent := if jsonUsesMonadicEffect eltJson then mkIdent ``List.mapM else mkIdent ``List.map
+        -- `[f(x) for x in input().split()]`: the iterable is IO. Lower it with an inline `←`
+        -- (the codebase's convention for IO values), which binds in the enclosing `do`, so the
+        -- map/filter run over the awaited `List` rather than a raw `IO (List _)`.
+        let baseIter ←
+          if jsonUsesIOEffect iterJson then inlineIOTerm iterJson
+          else getCode iterJson `term
+        let filtered ← comprehensionFilterOver compJson baseIter
+        `($mapIdent $mapper $filtered)
       else
+        let iterCode ← comprehensionIterSyntax compJson
         let nested ← lowerComprehensionClauses eltJson rest
         let binder ← listCompTargetLambda targetJson nested
         let flatMapIdent := mkIdent ``List.flatMap
@@ -114,17 +122,23 @@ def generatorExpSyntax : (kind : SyntaxNodeKind) → Json →
 def rangeSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
   | `term, json => do
-      let .ok argsJson := json.getObjValAs? Json "args" | throwError
-        s!"Range node does not have an 'args' field: {json}"
-      let argCodes ← match argsJson with
-        | .arr arr => arr.mapM (fun argJson => getCode argJson `term)
-        | _ => throwError s!"Range node 'args' field is not an array: {argsJson}"
+      let .ok argsArray := json.getObjValAs? (Array Json) "args" | throwError
+        s!"Range node does not have an 'args' field or it is not a JSON array: {json}"
+      let argCodes ← argsArray.mapM (fun argJson => getCode argJson `term)
       let pyRangeIdent := mkIdent ``pyRange
-      match argCodes.size with
-      | 1 => `($pyRangeIdent $(argCodes[0]!))
-      | 2 => `($pyRangeIdent $(argCodes[1]!) $(argCodes[0]!))
-      | 3 => `($pyRangeIdent $(argCodes[1]!) $(argCodes[0]!) $(argCodes[2]!))
-      | _ => throwError "range expects between one and three positional arguments."
+      let mkRange : Array (TSyntax `term) → PygenM (TSyntax `term) := fun resolved => do
+        match resolved.size with
+        | 1 => `($pyRangeIdent $(resolved[0]!))
+        | 2 => `($pyRangeIdent $(resolved[1]!) $(resolved[0]!))
+        | 3 => `($pyRangeIdent $(resolved[1]!) $(resolved[0]!) $(resolved[2]!))
+        | _ => throwError "range expects between one and three positional arguments."
+      -- `range(int(input()))` has an IO argument; lift the whole call into `IO (List Int)`
+      -- by awaiting the argument, so the iterable can be bound with `←` instead of passing a
+      -- raw `IO Int` to `pyRange`.
+      if argsArray.any basicJsonUsesIOEffect then
+        buildIOPureApplicationFromArgs argsArray argCodes mkRange
+      else
+        mkRange argCodes
   | _, _ => throwError s!"Unsupported syntax category for Range node"
 
 end PyAstLean

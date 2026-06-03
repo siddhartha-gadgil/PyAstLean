@@ -1,9 +1,18 @@
 import PyAstLean
 import Libraries
 import PyAstLean.PyGens.test2
+import Lean
+
+open Lean
+
+
+
+
+
 
 open PyAstLean
 open Libraries
+
 
 def main : IO Unit := do
   let mut t := PyAstLean.pyInt (← PyAstLean.pyInputIO "")

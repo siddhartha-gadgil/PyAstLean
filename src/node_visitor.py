@@ -403,6 +403,14 @@ class ASTToJsonLeanVisitorBase:
             and not keywords_json
         ):
             return {"node_type": "List", "elts": []}
+        # `dict()` with no arguments is the empty dict.
+        if (
+            func_json.get("node_type") == "Name"
+            and func_json.get("id") == "dict"
+            and not args_json
+            and not keywords_json
+        ):
+            return {"node_type": "Dict", "entries": []}
         return {
             "node_type": "Call",
             "func": func_json,
