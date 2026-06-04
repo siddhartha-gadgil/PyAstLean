@@ -156,8 +156,13 @@ partial def inlineIOTerm (json : Json) : PygenM (TSyntax `term) := do
                 getCode valueJson `term
             match pythonMethodMap attr with
             | some funcName =>
-                let mapped := mkIdent funcName
-                funcTerm ← `($mapped $receiverTerm)
+                -- Apply the mapped runtime function to the receiver as its *first* argument,
+                -- flat with the call arguments, rather than pre-building `(f receiver)`. The
+                -- latter is a complete sub-application, so a runtime method with a default
+                -- argument (e.g. `pyStringSplit`'s `sep`) would fill the default and then the
+                -- explicit argument (`s.split(" ")`) would be applied to the *result*.
+                funcTerm := (mkIdent funcName : TSyntax `term)
+                inlineArgs := #[receiverTerm] ++ inlineArgs
             | none =>
                 let attrId := mkIdent attr.toName
                 funcTerm ← `($receiverTerm.$attrId)
@@ -199,6 +204,48 @@ partial def inlineIOTerm (json : Json) : PygenM (TSyntax `term) := do
         let valueCode ← inlineIOTerm valueJson
         res ← `($appendIdent $res $valueCode)
       pure res
+  | "BinOp" => do
+      -- Recurse into both operands so an IO subexpression (e.g. `int(input()) + 5`) becomes an
+      -- inline `(← …)` await in a pure arithmetic position rather than an un-awaited `IO _`.
+      let .ok op := json.getObjValAs? String "op" | throwError s!"BinOp node missing 'op': {json}"
+      let .ok leftJson := json.getObjValAs? Json "left" | throwError s!"BinOp node missing 'left': {json}"
+      let .ok rightJson := json.getObjValAs? Json "right" | throwError s!"BinOp node missing 'right': {json}"
+      let leftCode ← inlineIOTerm leftJson
+      let rightCode ← inlineIOTerm rightJson
+      binOpApplyTerm op leftCode rightCode
+  | "UnaryOp" => do
+      let .ok op := json.getObjValAs? String "op" | throwError s!"UnaryOp node missing 'op': {json}"
+      let .ok operandJson := json.getObjValAs? Json "operand" | throwError s!"UnaryOp node missing 'operand': {json}"
+      let operandCode ← inlineIOTerm operandJson
+      unaryOpApplyTerm op operandCode
+  | "Compare" => do
+      let .ok op := json.getObjValAs? String "op" | throwError s!"Compare node missing 'op': {json}"
+      let .ok leftJson := json.getObjValAs? Json "left" | throwError s!"Compare node missing 'left': {json}"
+      let .ok rightJson := json.getObjValAs? Json "right" | throwError s!"Compare node missing 'right': {json}"
+      let leftCode ← inlineIOTerm leftJson
+      let rightCode ← inlineIOTerm rightJson
+      compareApplyTerm op leftJson leftCode rightCode
+  | "BoolOp" => do
+      let .ok op := json.getObjValAs? String "op" | throwError s!"BoolOp node missing 'op': {json}"
+      let .ok valuesJson := json.getObjValAs? Json "values" | throwError s!"BoolOp node missing 'values': {json}"
+      let valuesArray ← match valuesJson with
+        | .arr arr => arr.mapM inlineIOTerm
+        | _ => throwError s!"BoolOp node 'values' field is not an array: {valuesJson}"
+      if valuesArray.isEmpty then throwError s!"BoolOp node 'values' array is empty: {valuesJson}"
+      match op with
+      | "and" => valuesArray.foldlM (fun a b => `($a && $b)) valuesArray[0]! (start := 1)
+      | "or" => valuesArray.foldlM (fun a b => `($a || $b)) valuesArray[0]! (start := 1)
+      | _ => throwError s!"Unsupported boolean operator: {op}"
+  | "ListComp" => do
+      -- A comprehension whose element is itself effectful (e.g. `[int(input()) for _ in …]`)
+      -- lowers to `List.mapM …`, an `IO (List _)` action. Await it inline so the surrounding
+      -- pure position sees the resulting `List _`. When only the *iterable* is IO the element
+      -- stays pure (`List.map`), so the comprehension is already a `List _` — do not await.
+      let compTerm ← getCode json `term
+      match json.getObjValAs? Json "elt" with
+      | .ok eltJson =>
+          if basicJsonUsesIOEffect eltJson then `((← $compTerm)) else pure compTerm
+      | _ => pure compTerm
   | _ =>
       return ← getCode json `term
 

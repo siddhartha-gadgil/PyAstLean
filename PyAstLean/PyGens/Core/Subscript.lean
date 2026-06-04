@@ -94,12 +94,12 @@ def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
             let idx := sliceJson.getObjValAs? Int "value"
             match idx with
             | .ok i =>
-                let getIdent := mkIdent `PyAstLean.pyListGetItem
+                let getIdent := mkIdent `PyAstLean.pyGetItem
                 let iStx ← intToStx i
                 `($getIdent $valueCode $iStx)
             | _ =>
                 let sliceCode ← getCode sliceJson `term
-                let getIdent := mkIdent `PyAstLean.pyListGetItem
+                let getIdent := mkIdent `PyAstLean.pyGetItem
                 `($getIdent $valueCode $sliceCode)
         | .ok "UnaryOp" =>
             let op := sliceJson.getObjValAs? String "op"
@@ -113,7 +113,7 @@ def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
                         match jVal.getNat? with
                         | .ok n =>
                             let idx := -(n : Int)
-                            let getIdent := mkIdent `PyAstLean.pyListGetItem
+                            let getIdent := mkIdent `PyAstLean.pyGetItem
                             let iStx ← intToStx idx
                             `($getIdent $valueCode $iStx)
                         | _ =>
@@ -122,19 +122,19 @@ def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
                             `($getIdent $valueCode $sliceCode)
                     | _ =>
                         let sliceCode ← getCode sliceJson `term
-                        let getIdent := mkIdent `PyAstLean.pyListGetItem
+                        let getIdent := mkIdent `PyAstLean.pyGetItem
                         `($getIdent $valueCode $sliceCode)
                 | _ =>
                     let sliceCode ← getCode sliceJson `term
-                    let getIdent := mkIdent `PyAstLean.pyListGetItem
+                    let getIdent := mkIdent `PyAstLean.pyGetItem
                     `($getIdent $valueCode $sliceCode)
             else
                 let sliceCode ← getCode sliceJson `term
-                let getIdent := mkIdent `PyAstLean.pyListGetItem
+                let getIdent := mkIdent `PyAstLean.pyGetItem
                 `($getIdent $valueCode $sliceCode)
         | _ =>
             let sliceCode ← getCode sliceJson `term
-            let getIdent := mkIdent `PyAstLean.pyListGetItem
+            let getIdent := mkIdent `PyAstLean.pyGetItem
             `($getIdent $valueCode $sliceCode)
   | _, _ => throwError s!"Unsupported syntax category for Subscript node"
 

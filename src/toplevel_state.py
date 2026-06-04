@@ -87,6 +87,74 @@ def _block_mutated_names(body):
     return mutated
 
 
+def _names_referenced(node):
+    """All Name ids referenced anywhere in `node`, not descending into nested function/class
+    bodies (those open their own scope)."""
+    found = set()
+
+    def walk(n):
+        if isinstance(n, dict):
+            node_type = n.get("node_type")
+            if node_type == "Name":
+                ident = n.get("id")
+                if isinstance(ident, str):
+                    found.add(ident)
+                return
+            if node_type in {"FunctionDef", "AsyncFunctionDef", "Lambda", "ClassDef"}:
+                return
+            for value in n.values():
+                walk(value)
+        elif isinstance(n, list):
+            for item in n:
+                walk(item)
+
+    walk(node)
+    return found
+
+
+def _annotate_ifs_in_block(stmts):
+    """For each statement list, annotate each `If` with `if_assigned_names`: the names it
+    assigns in either branch that are *also referenced later in the same block* — i.e. that
+    escape the `if`. Branch-local names (used only inside the branch) are deliberately left
+    out so they keep their natural per-branch scope and type inference.
+
+    Then recurse into every sub-block (including function bodies, which form their own block).
+    """
+    if not isinstance(stmts, list):
+        return
+    n = len(stmts)
+    for i, stmt in enumerate(stmts):
+        if not isinstance(stmt, dict):
+            continue
+        if stmt.get("node_type") == "If":
+            assigned = _block_mutated_names(stmt.get("body", []))
+            assigned |= _block_mutated_names(stmt.get("orelse", []))
+            later = set()
+            for later_stmt in stmts[i + 1:]:
+                later |= _names_referenced(later_stmt)
+            stmt["if_assigned_names"] = sorted(assigned & later)
+        for key in ("body", "orelse", "finalbody"):
+            _annotate_ifs_in_block(stmt.get(key, []))
+        for handler in stmt.get("handlers", []) or []:
+            if isinstance(handler, dict):
+                _annotate_ifs_in_block(handler.get("body", []))
+        for case in stmt.get("cases", []) or []:
+            if isinstance(case, dict):
+                _annotate_ifs_in_block(case.get("body", []))
+
+
+def annotate_if_assigned_names(module_json):
+    """Annotate `If` nodes with the names that escape them (see `_annotate_ifs_in_block`).
+
+    The Lean `doElem` lowering hoists each escaping name (not already bound in the enclosing
+    scope) as `let mut name := default` *before* the `if`, so a variable first bound in one
+    branch stays in scope for the other branch and for uses after the `if` — matching Python,
+    which binds across branches in the enclosing scope rather than per-branch.
+    """
+    if isinstance(module_json, dict):
+        _annotate_ifs_in_block(module_json.get("body", []))
+
+
 def _plain_assign_name(stmt):
     """Return the single Name id a top-level `x = ...` binds, or None for other shapes."""
     if not (isinstance(stmt, dict) and stmt.get("node_type") == "Assign"):

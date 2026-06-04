@@ -31,6 +31,10 @@ instance : PyIntCast Bool where
 instance : PyIntCast String where
   pyInt s := s.trimAscii.toString.toInt? |>.getD 0
 
+/-- Python `int(x)` on a float truncates toward zero (e.g. `int(n ** 0.5)`). -/
+instance : PyIntCast Float where
+  pyInt x := if x ≥ 0 then (x.toUInt64.toNat : Int) else -((-x).toUInt64.toNat : Int)
+
 /--
 Python-style `str(...)` coercion.
 

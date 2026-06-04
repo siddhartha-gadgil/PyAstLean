@@ -13,7 +13,11 @@ import threading
 from collections import deque
 sys.path.append(os.path.dirname(__file__))
 from node_visitor import *
-from toplevel_state import annotate_main_entrypoint, annotate_toplevel_state
+from toplevel_state import (
+    annotate_main_entrypoint,
+    annotate_toplevel_state,
+    annotate_if_assigned_names,
+)
 
 HOMEDIR = Path.absolute(Path(__name__).parent.parent)
 SRC_DIR = HOMEDIR / "src"
@@ -539,6 +543,7 @@ def translate_to_json(source_code, filepath=None):
     annotate_io_effects(data)
     annotate_main_entrypoint(data)
     annotate_toplevel_state(data)
+    annotate_if_assigned_names(data)
     logger.debug("Generated JSON IR: %s", json.dumps(data))
     return json.dumps(data)
 

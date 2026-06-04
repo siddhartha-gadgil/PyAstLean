@@ -24,6 +24,9 @@ def pythonBuiltinMap? (name : String) : Option Lean.Name :=
   | "reversed" => some ``pyReversed
   | "chr" => some ``pyChr
   | "ord" => some ``pyOrd
+  -- `pow(b, e)` ≡ `b ** e`; `pow(b, e, m)` is modular exponentiation. `pyPow`'s modulus
+  -- argument defaults to `0` ("no modulus"), so both arities lower to the same name.
+  | "pow" => some ``pyPow
   | "set" => some ``pySet
   -- `int`/`str` have dedicated special-case lowering for *direct* calls (`int(x)`); the
   -- registry entries make them usable as first-class callables, e.g. `map(int, xs)`.

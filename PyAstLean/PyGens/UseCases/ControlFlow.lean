@@ -119,7 +119,15 @@ def forTargetBinder (targetJson : Json) :
   match jsonNodeType? targetJson with
   | some "Name" =>
       let targetIdent ← getCode targetJson `ident
-      pure (targetIdent, #[])
+      -- Lean forbids a `for` binder from shadowing an enclosing `let mut`. When Python reuses
+      -- a name that is already a mutable variable in scope (`p = 2; ...; for p in ...:`), bind
+      -- a fresh loop variable and assign it into the existing mutable, matching Python's rebind.
+      if ← hasVar targetIdent.getId then
+        let loopIdent := mkIdent (← freshName `__py_loop)
+        let assign ← `(doElem| $targetIdent:ident := $loopIdent)
+        pure (loopIdent, #[assign])
+      else
+        pure (targetIdent, #[])
   | some "Tuple" =>
       let .ok elts := targetJson.getObjValAs? (Array Json) "elts" | throwError
         s!"For-loop tuple target does not have an 'elts' field: {targetJson}"
@@ -328,17 +336,21 @@ def whileSyntax : (kind : SyntaxNodeKind) → Json →
     | `doElem, json => do
         let .ok test := json.getObjVal? "test" | throwError
           s!"While node does not have a 'test' field or it is not a JSON value: {json}"
-        let testStx ← getCode test `term
+        let testStx ← truthyConditionTerm test (← getCode test `term)
         let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
           s!"While node does not have a 'body' field or it is not a JSON array: {json}"
         let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
           s!"While node does not have an 'orelse' field or it is not a JSON array: {json}"
         unless orelseElems.isEmpty do
           throwError "Python while-else blocks are not supported."
-        let mut bodyStxArray := #[]
-        for elem in bodyElems do
-            let elemStx ← getCode elem `doElem
-            bodyStxArray := appendDoElems bodyStxArray elemStx
+        -- Scope the body's variable declarations to the loop (see the `for` case): names
+        -- first bound in the body do not leak to the enclosing scope.
+        let bodyStxArray ← withFixedVariables do
+          let mut bodyStxArray := #[]
+          for elem in bodyElems do
+              let elemStx ← getCode elem `doElem
+              bodyStxArray := appendDoElems bodyStxArray elemStx
+          pure bodyStxArray
         -- Parenthesize the test so its last token never glues to the `do` keyword.
         `(doElem| while ($testStx) do
             $[$bodyStxArray:doElem]*)
@@ -368,12 +380,18 @@ def forSyntax : (kind : SyntaxNodeKind) → Json →
           s!"For node does not have an 'orelse' field or it is not a JSON array: {json}"
         unless orelseElems.isEmpty do
           throwError "Python for-else blocks are not supported."
-        let (targetIdent, preludeElems) ← forTargetBinder targetJson
         let iterCode ← rangeIterSyntax iterJson
-        let mut bodyStxArray := preludeElems
-        for elem in bodyElems do
-          let elemStx ← getCode elem `doElem
-          bodyStxArray := appendDoElems bodyStxArray elemStx
+        -- Scope the loop's target and body variable declarations to the loop: names first
+        -- bound inside the body must not leak into the enclosing scope, so a later
+        -- `x = ...` after the loop is emitted as a fresh `let mut` rather than a reassignment
+        -- of a variable whose `let mut` was confined to the loop body (Python rebinds anyway).
+        let (targetIdent, bodyStxArray) ← withFixedVariables do
+          let (targetIdent, preludeElems) ← forTargetBinder targetJson
+          let mut bodyStxArray := preludeElems
+          for elem in bodyElems do
+            let elemStx ← getCode elem `doElem
+            bodyStxArray := appendDoElems bodyStxArray elemStx
+          pure (targetIdent, bodyStxArray)
         -- Parenthesize the iterable so its last token never glues to the `do` keyword
         -- (e.g. an iterable ending in `none` would otherwise pretty-print as `nonedo`).
         if jsonUsesIOEffect iterJson then
@@ -408,27 +426,53 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
           s!"If node does not have a 'body' field or it is not a JSON array: {json}"
         let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
           s!"If node does not have an 'orelse' field or it is not a JSON array: {json}"
-        let testStx ← getCode testJson `term
-        let mut bodyStxArray := #[]
-        for elem in bodyElems do
-          let elemStx ← getCode elem `doElem
-          bodyStxArray := appendDoElems bodyStxArray elemStx
-        let mut orelseStxArray := #[]
-        for elem in orelseElems do
-          let elemStx ← getCode elem `doElem
-          orelseStxArray := appendDoElems orelseStxArray elemStx
-        if orelseStxArray.isEmpty then
-          let noop ← noopDoElemSyntax
-          `(doElem| if $testStx then
-              $[$bodyStxArray:doElem]*
-            else
-              $noop:doElem
-          )
+        let testStx ← truthyConditionTerm testJson (← getCode testJson `term)
+        -- Hoist names that are first bound inside a branch but escape the `if` (read after it).
+        -- Each branch lowers to its own `do` block, so a `let mut` there is invisible to the
+        -- other branch and to following statements. Pre-declaring `let mut name := default`
+        -- before the `if` (and registering it) turns both branch assignments into reassignments
+        -- of one enclosing-scope variable, matching Python's cross-branch binding. Only names
+        -- the pre-pass found to escape are listed; branch-local names keep their per-branch scope.
+        let assignedNames :=
+          (json.getObjValAs? (Array String) "if_assigned_names").toOption.getD #[]
+        let mut hoistDecls : Array (TSyntax `doElem) := #[]
+        for nm in assignedNames do
+          let nmName := nm.toName
+          unless (← hasVar nmName) do
+            let nmIdent := mkIdent nmName
+            hoistDecls := hoistDecls.push (← `(doElem| let mut $nmIdent:ident := default))
+            addVar nmName
+        -- Scope each branch's variable declarations to that branch: a name first bound in the
+        -- `then` branch must not leak into the `else` branch's scope (which would make the `else`
+        -- assignment a reassignment of a `let mut` it cannot see). Names that escape the whole
+        -- `if` are handled by the hoist above; everything else stays branch-local.
+        let bodyStxArray ← withFixedVariables do
+          let mut arr : Array (TSyntax `doElem) := #[]
+          for elem in bodyElems do
+            arr := appendDoElems arr (← getCode elem `doElem)
+          pure arr
+        let orelseStxArray ← withFixedVariables do
+          let mut arr : Array (TSyntax `doElem) := #[]
+          for elem in orelseElems do
+            arr := appendDoElems arr (← getCode elem `doElem)
+          pure arr
+        let ifStx ←
+          if orelseStxArray.isEmpty then
+            let noop ← noopDoElemSyntax
+            `(doElem| if $testStx then
+                $[$bodyStxArray:doElem]*
+              else
+                $noop:doElem
+            )
+          else
+            `(doElem| if $testStx then
+                $[$bodyStxArray:doElem]*
+              else
+                $[$orelseStxArray:doElem]*)
+        if hoistDecls.isEmpty then
+          pure ifStx
         else
-          `(doElem| if $testStx then
-              $[$bodyStxArray:doElem]*
-            else
-              $[$orelseStxArray:doElem]*)
+          pure ⟨mkNullNode ((hoistDecls.push ifStx).map TSyntax.raw)⟩
     | `command, json => do
         -- A top-level `if` that mutates module globals is a state transformer.
         match blockMutatedNames? json with

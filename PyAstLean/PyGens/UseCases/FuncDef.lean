@@ -286,9 +286,10 @@ def assignHeadSyntax : (kind : SyntaxNodeKind) → Json →
             let n := idents.size
             let valueStx ← getCode value `term
             let unpackTmpIdent := mkIdent (← freshName `__unpack_pair)
+            let isTuple := jsonNodeType? value == some "Tuple"
             let mut result := tailCode
             for i in (List.range n).reverse do
-              let acc ← tupleAccessTerm unpackTmpIdent i n
+              let acc ← unpackAccessTerm isTuple unpackTmpIdent i n
               result ← `(let $(idents[i]!) := $acc
                 $result)
             `(let $unpackTmpIdent := $valueStx

@@ -211,6 +211,96 @@ def isNoneConstantJson (json : Json) : Bool :=
   match json.getObjValAs? String "node_type", json.getObjValAs? Json "value" with
   | .ok "Constant", .ok .null => true
   | _, _ => false
+
+/-- Apply a Python binary operator to already-lowered operand terms. Shared by `binOpSyntax`
+and `inlineIOTerm` so IO-bearing operands can be hoisted without duplicating the op table. -/
+def binOpApplyTerm (op : String) (leftCode rightCode : TSyntax `term) :
+    PygenM (TSyntax `term) := do
+  match op with
+  | "add" => `($leftCode +ₚ $rightCode)
+  | "sub" => `($leftCode -ₚ $rightCode)
+  | "mul" => `($leftCode *ₚ $rightCode)
+  | "div" => `($leftCode /ₚ $rightCode)
+  | "floordiv" =>
+      let floorDivIdent := mkIdent ``PyAstLean.pyFloorDiv
+      `($floorDivIdent $leftCode $rightCode)
+  | "pow" => `($leftCode ^ₚ $rightCode)
+  | "mod" => `($leftCode %ₚ $rightCode)
+  | "bitand" => `($(mkIdent ``PyAstLean.pyBitAnd) $leftCode $rightCode)
+  | "bitor" => `($(mkIdent ``PyAstLean.pyBitOr) $leftCode $rightCode)
+  | "bitxor" => `($(mkIdent ``PyAstLean.pyBitXor) $leftCode $rightCode)
+  | "lshift" => `($(mkIdent ``PyAstLean.pyShiftLeft) $leftCode $rightCode)
+  | "rshift" => `($(mkIdent ``PyAstLean.pyShiftRight) $leftCode $rightCode)
+  | _ => throwError s!"Unsupported binary operator: {op}"
+
+/-- Apply a Python unary operator to an already-lowered operand term. -/
+def unaryOpApplyTerm (op : String) (operandCode : TSyntax `term) :
+    PygenM (TSyntax `term) := do
+  match op with
+  | "not" => `(! $operandCode)
+  | "neg" => `(- $operandCode)
+  | "pos" => `($operandCode)
+  | _ => throwError s!"Unsupported unary operator: {op}"
+
+/-- Whether a condition's IR already lowers to a `Bool` (a comparison, boolean operator,
+`not`, or a boolean literal). Such tests need no truthiness conversion; everything else (a
+bare `int`/`list`/`str`/`Option` used as `if x:` / `while x:`) is wrapped in `pyTruthy`. -/
+def conditionIsBoolean (json : Json) : Bool :=
+  match json.getObjValAs? String "node_type" with
+  | .ok "Compare" => true
+  | .ok "BoolOp" => true
+  | .ok "UnaryOp" => json.getObjValAs? String "op" == .ok "not"
+  | .ok "Constant" =>
+      match json.getObjValAs? Json "value" with
+      | .ok (.bool _) => true
+      | _ => false
+  | _ => false
+
+/-- Lower a condition expression, applying Python truthiness (`pyTruthy`) unless it already
+produces a `Bool`. Used by `if`/`while`/`if`-expression lowering. -/
+def truthyConditionTerm (json : Json) (code : TSyntax `term) : PygenM (TSyntax `term) := do
+  if conditionIsBoolean json then pure code
+  else `($(mkIdent ``PyAstLean.pyTruthy) $code)
+
+/-- A JSON node that lowers to a Lean `String` value: a string literal or an f-string. Used to
+route `x in s` to substring containment when the left operand is statically a string. -/
+def isStringyJson (json : Json) : Bool :=
+  match json.getObjValAs? String "node_type" with
+  | .ok "JoinedStr" => true
+  | .ok "Constant" =>
+      match json.getObjValAs? Json "value" with
+      | .ok (.str _) => true
+      | _ => false
+  | _ => false
+
+/-- Apply a Python comparison operator to already-lowered operand terms. `leftJson` is the
+left operand's IR, used only to decide membership lowering: a string literal on the left of
+`in`/`not in` means *substring* containment (`pyStrContainsSubstr`); otherwise membership
+dispatches through `pyContains`, whose `outParam` element type pins the element from the
+container. -/
+def compareApplyTerm (op : String) (leftJson : Json) (leftCode rightCode : TSyntax `term) :
+    PygenM (TSyntax `term) := do
+  match op with
+  | "eq" => `($leftCode == $rightCode)
+  | "ne" => `($leftCode != $rightCode)
+  | "is" => `($leftCode == $rightCode)
+  | "isnot" => `($leftCode != $rightCode)
+  | "lt" => `($leftCode < $rightCode)
+  | "le" => `($leftCode <= $rightCode)
+  | "gt" => `($leftCode > $rightCode)
+  | "ge" => `($leftCode >= $rightCode)
+  | "in" =>
+      if isStringyJson leftJson then
+        `($(mkIdent ``PyAstLean.pyStrContainsSubstr) $rightCode $leftCode)
+      else
+        `($(mkIdent ``pyContains) $rightCode $leftCode)
+  | "notin" =>
+      if isStringyJson leftJson then
+        `(! ($(mkIdent ``PyAstLean.pyStrContainsSubstr) $rightCode $leftCode))
+      else
+        `(! ($(mkIdent ``pyContains) $rightCode $leftCode))
+  | _ => throwError s!"Unsupported comparison operator: {op}"
+
 @[pygen "BinOp"]
 def binOpSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -224,22 +314,7 @@ def binOpSyntax : (kind : SyntaxNodeKind) → Json →
       s!"BinOp node does not have a 'right' field or it is not a JSON value: {json}"
     let leftCode ←  getCode leftJson `term
     let rightCode ← getCode rightJson `term
-    match op with
-    | "add" => `($leftCode +ₚ $rightCode)
-    | "sub" => `($leftCode -ₚ $rightCode)
-    | "mul" => `($leftCode *ₚ $rightCode)
-    | "div" => `($leftCode /ₚ $rightCode)
-    | "floordiv" =>
-        let floorDivIdent := mkIdent ``PyAstLean.pyFloorDiv
-        `($floorDivIdent $leftCode $rightCode)
-    | "pow" => `($leftCode ^ₚ $rightCode)
-    | "mod" => `($leftCode %ₚ $rightCode)
-    | "bitand" => `($(mkIdent ``PyAstLean.pyBitAnd) $leftCode $rightCode)
-    | "bitor" => `($(mkIdent ``PyAstLean.pyBitOr) $leftCode $rightCode)
-    | "bitxor" => `($(mkIdent ``PyAstLean.pyBitXor) $leftCode $rightCode)
-    | "lshift" => `($(mkIdent ``PyAstLean.pyShiftLeft) $leftCode $rightCode)
-    | "rshift" => `($(mkIdent ``PyAstLean.pyShiftRight) $leftCode $rightCode)
-    | _ => throwError s!"Unsupported binary operator: {op}"
+    binOpApplyTerm op leftCode rightCode
   | _, _ => throwError s!"Unsupported syntax category for BinOp node"
 
 @[pygen "UnaryOp"]
@@ -251,11 +326,7 @@ def unaryOpSyntax : (kind : SyntaxNodeKind) → Json →
     let .ok operandJson := json.getObjValAs? Json "operand" | throwError
       s!"UnaryOp node does not have an 'operand' field or it is not a JSON value: {json}"
     let operandCode ← getCode operandJson `term
-    match op with
-    | "not" => `(! $operandCode)
-    | "neg" => `(- $operandCode)
-    | "pos" => `($operandCode)
-    | _ => throwError s!"Unsupported unary operator: {op}"
+    unaryOpApplyTerm op operandCode
   | _, _ => throwError s!"Unsupported syntax category for UnaryOp node"
 
 @[pygen "BoolOp"]
@@ -291,38 +362,7 @@ def compareSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Compare node does not have a 'right' field or it is not a JSON value: {json}"
     let leftCode ← getCode leftJson `term
     let rightCode ← getCode rightJson `term
-    let usePyContains :=
-      match rightJson.getObjValAs? String "node_type" with
-      | .ok "BinOp" => true
-      | .ok "Constant" =>
-          match rightJson.getObjValAs? Json "value" with
-          | .ok (.str _) => true
-          | _ => false
-      | _ => false
-    match op with
-    | "eq" => `($leftCode == $rightCode)
-    | "ne" => `($leftCode != $rightCode)
-    -- `is`/`is not` are identity in Python; for the dominant `x is None` idiom equality is
-    -- the right approximation, so we lower them like `==`/`!=`.
-    | "is" => `($leftCode == $rightCode)
-    | "isnot" => `($leftCode != $rightCode)
-    | "lt" => `($leftCode < $rightCode)
-    | "le" => `($leftCode <= $rightCode)
-    | "gt" => `($leftCode > $rightCode)
-    | "ge" => `($leftCode >= $rightCode)
-    | "in" =>
-        if usePyContains = true then
-          let containsIdent := mkIdent ``pyContains
-          `($containsIdent $rightCode $leftCode)
-        else
-          `(decide ($leftCode ∈ $rightCode))
-    | "notin" =>
-        if usePyContains = true then
-          let containsIdent := mkIdent ``pyContains
-          `(! ($containsIdent $rightCode $leftCode))
-        else
-          `(decide ($leftCode ∉ $rightCode))
-    | _ => throwError s!"Unsupported comparison operator: {op}"
+    compareApplyTerm op leftJson leftCode rightCode
   | _, _ => throwError s!"Unsupported syntax category for Compare node"
 
 @[pygen "IfExp"]
@@ -335,7 +375,7 @@ def ifExpSyntax : (kind : SyntaxNodeKind) → Json →
       s!"IfExp node does not have a 'body' field or it is not a JSON value: {json}"
     let .ok orelseJson := json.getObjValAs? Json "orelse" | throwError
       s!"IfExp node does not have an 'orelse' field or it is not a JSON value: {json}"
-    let testCode ← getCode testJson `term
+    let testCode ← truthyConditionTerm testJson (← getCode testJson `term)
     let bodyIsNone := isNoneConstantJson bodyJson
     let orelseIsNone := isNoneConstantJson orelseJson
     if bodyIsNone && orelseIsNone then

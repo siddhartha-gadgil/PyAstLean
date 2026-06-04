@@ -254,21 +254,21 @@ def returnSyntax : (kind : SyntaxNodeKind) → Json →
         | .null =>
             `(doElem| return (()))
         | _ =>
-            if jsonUsesIOEffect value then
-              let valueStx ← inlineIOTerm value
-              if shouldParenthesizeReturnValue value then
-                `(doElem| return ($valueStx))
+            let valueStx ←
+              if jsonUsesIOEffect value then
+                inlineIOTerm value
               else
-                `(doElem| return $valueStx)
-            else
-              let valueStx ← getCode value `term
-              if jsonUsesMonadicEffect value then
-                `(doElem| return (← $valueStx:term))
-              else
-                if shouldParenthesizeReturnValue value then
-                  `(doElem| return ($valueStx))
-                else
-                  `(doElem| return $valueStx)
+                let s ← getCode value `term
+                if jsonUsesMonadicEffect value then `((← $s:term)) else pure s
+            -- Bind the return value to a temporary, then `return` the temporary. A wide
+            -- expression placed directly after `return` can be split onto the next line by the
+            -- pretty-printer, which re-parses as `return` (Unit) followed by a stray term
+            -- ("must be last element in a `do` sequence"). A `let` binding wraps safely, and
+            -- `return <ident>` is always narrow enough to stay on one line.
+            let retIdent := mkIdent (← freshName `__py_ret)
+            let bind ← `(doElem| let $retIdent:ident := $valueStx)
+            let ret ← `(doElem| return $retIdent)
+            pure ⟨mkNullNode #[bind.raw, ret.raw]⟩
     | _, _ => throwError s!"Unsupported syntax category for Return node"
 
 end PyAstLean

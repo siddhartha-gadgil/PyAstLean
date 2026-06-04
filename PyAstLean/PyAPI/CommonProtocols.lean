@@ -1,5 +1,6 @@
 import PyAstLean.PyAPI.CommonProtocols.Length
 import PyAstLean.PyAPI.CommonProtocols.SetItem
+import PyAstLean.PyAPI.CommonProtocols.GetItem
 import PyAstLean.PyAPI.CommonProtocols.Membership
 import PyAstLean.PyAPI.CommonProtocols.Iterable
 import PyAstLean.PyAPI.CommonProtocols.Clear
@@ -11,6 +12,7 @@ import PyAstLean.PyAPI.CommonProtocols.Index
 import PyAstLean.PyAPI.CommonProtocols.Bool
 import PyAstLean.PyAPI.CommonProtocols.AnyFunc
 import PyAstLean.PyAPI.CommonProtocols.Reversed
+import PyAstLean.PyAPI.CommonProtocols.Truthy
 
 /-!
 Intentionally extensible runtime protocols shared by several Lean datatypes.

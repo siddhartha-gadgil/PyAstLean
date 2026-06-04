@@ -18,6 +18,26 @@ instance (priority := high) : PyHAdd Rat Rat Rat where
 instance : PyHAdd String String String where
   hAdd := String.append
 
+/-- String building by appending a single character, e.g. `s + word[i]`. -/
+instance : PyHAdd String Char String where
+  hAdd := fun s c => s ++ c.toString
+
+/-! Mixed numeric `+`. Lean has no heterogeneous `HAdd Nat Int` / `HAdd Rat Int`, so the
+generic `[HAdd α β γ]` instance does not cover these mixed-type sums that arise when one
+operand came from integer division (`Rat`) or a length/count (`Nat`). The result widens to
+the more general type. -/
+instance (priority := high) : PyHAdd Rat Int Rat where
+  hAdd := fun a b => a + (b : Rat)
+
+instance (priority := high) : PyHAdd Int Rat Rat where
+  hAdd := fun a b => (a : Rat) + b
+
+instance (priority := high) : PyHAdd Nat Int Int where
+  hAdd := fun a b => (a : Int) + b
+
+instance (priority := high) : PyHAdd Int Nat Int where
+  hAdd := fun a b => a + (b : Int)
+
 class PyHSub (α β : Type) (γ : outParam Type) where
   hSub : α → β → γ
 
@@ -103,6 +123,24 @@ instance (priority := high) {α β} [Pow α β] : PyHPow α β α where
 @[default_instance]
 instance (priority := high) : PyHPow Rat Int Rat where
   hPow := fun a b => (a : Rat) ^ (b : Int)
+
+/-- Python `a ** b` on integers, e.g. `2 ** n`. Lean has no `HPow Int Int Int` (a negative
+exponent would be a rational), so we raise to `b.toNat`; this matches competitive-programming
+use, where exponents are non-negative. -/
+@[default_instance]
+instance (priority := high) : PyHPow Int Int Int where
+  hPow := fun a b => a ^ b.toNat
+
+instance : PyHPow Nat Nat Nat where
+  hPow := fun a b => a ^ b
+
+/-- Python `a ** b` with a float exponent (e.g. `n ** 0.5` for a square root) yields a float.
+The base is widened to `Float`; the common idiom is `int(n ** 0.5)`. -/
+instance (priority := high) : PyHPow Int Float Float where
+  hPow := fun a b => Float.pow (Float.ofInt a) b
+
+instance (priority := high) : PyHPow Float Float Float where
+  hPow := fun a b => Float.pow a b
 
 @[default_instance]
 instance (priority := high) : Neg Rat where

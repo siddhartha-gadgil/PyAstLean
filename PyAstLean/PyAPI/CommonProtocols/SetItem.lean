@@ -7,23 +7,21 @@ Typeclass for Python-style item assignment, `container[index] = value`.
 
 Lists and dicts are immutable values in this runtime, so item assignment is modeled as a
 pure rebuild: `pySetItem c i v` returns a new container with the slot updated, and the
-codegen reassigns the variable (`c := pySetItem c i v`). The index and value types vary by
-container, so they are associated types (as in `PySort`).
+codegen reassigns the variable (`c := pySetItem c i v`). The index type `ι` and value type
+`β` are `outParam`s (not associated types): an associated `Index`/`Value` projection stays
+"stuck" and never reduces to a concrete type, which breaks resolution of any instance needed
+on the result; as `outParam`s they reduce concretely once the container type `α` is known.
 -/
-class PySetItem (α : Type) where
-  Index : Type
-  Value : Type
-  setItem : α → Index → Value → α
+class PySetItem (α : Type) (ι : outParam Type) (β : outParam Type) where
+  setItem : α → ι → β → α
 
 /-- Dispatch `container[index] = value` through the `PySetItem` typeclass. -/
-def pySetItem {α : Type} [inst : PySetItem α] (c : α) (i : inst.Index) (v : inst.Value) : α :=
-  inst.setItem c i v
+def pySetItem {α ι β : Type} [PySetItem α ι β] (c : α) (i : ι) (v : β) : α :=
+  PySetItem.setItem c i v
 
 /-- Lists support item assignment with Python negative-index semantics; an out-of-range
 index panics with an `IndexError`, matching `pyListGetItem`. -/
-instance {β : Type} : PySetItem (List β) where
-  Index := Int
-  Value := β
+instance {β : Type} : PySetItem (List β) Int β where
   setItem xs idx v :=
     let len := xs.length
     let lenInt : Int := len
@@ -34,9 +32,7 @@ instance {β : Type} : PySetItem (List β) where
       xs.set trueIdx.toNat v
 
 /-- Dictionaries support item assignment as insert/overwrite. -/
-instance {κ ν : Type} [BEq κ] [Hashable κ] : PySetItem (Std.HashMap κ ν) where
-  Index := κ
-  Value := ν
+instance {κ ν : Type} [BEq κ] [Hashable κ] : PySetItem (Std.HashMap κ ν) κ ν where
   setItem m k v := m.insert k v
 
 end PyAstLean
