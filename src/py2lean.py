@@ -195,6 +195,37 @@ def _crossfile_import_lines(body):
     return import_lines
 
 
+def _collect_scope_function_defs(body):
+    """Collect the `FunctionDef` nodes that live in a single Python scope.
+
+    A `def` nested inside an `if`/`for`/`while`/`try`/`with` block is still in the *same*
+    scope (those compound statements do not introduce a scope in Python), so effect analysis
+    must see it — e.g. the harness wraps bare top-level code under `if __name__ == "__main__":`,
+    which nests the program's functions one level deep. We descend through compound statements
+    but stop at scope boundaries (`FunctionDef`/`AsyncFunctionDef`/`ClassDef`/`Lambda`), whose
+    own bodies form separate scopes handled by recursion.
+    """
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            node_type = node.get("node_type")
+            if node_type == "FunctionDef":
+                found.append(node)
+                return  # separate scope: do not descend into its body
+            if node_type in {"AsyncFunctionDef", "ClassDef", "Lambda"}:
+                return  # separate scopes, not handled by this collector
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for stmt in body:
+        walk(stmt)
+    return found
+
+
 def _body_has_direct_exception_syntax(body):
     for stmt in body:
         for node in _walk_json_nodes(stmt, skip_nested_function_bodies=True):
@@ -288,9 +319,9 @@ def annotate_exception_effects(module_json):
     """Mark function defs and direct calls that require translated `Except` handling."""
     def annotate_scope(body):
         local_functions = {
-            stmt["name"]: stmt
-            for stmt in body
-            if isinstance(stmt, dict) and stmt.get("node_type") == "FunctionDef"
+            fn["name"]: fn
+            for fn in _collect_scope_function_defs(body)
+            if isinstance(fn.get("name"), str)
         }
         for fn in local_functions.values():
             annotate_scope(fn.get("body", []))
@@ -326,9 +357,9 @@ def annotate_io_effects(module_json):
     """Mark input/print-bearing function defs and direct calls that require translated `IO` handling."""
     def annotate_scope(body):
         local_functions = {
-            stmt["name"]: stmt
-            for stmt in body
-            if isinstance(stmt, dict) and stmt.get("node_type") == "FunctionDef"
+            fn["name"]: fn
+            for fn in _collect_scope_function_defs(body)
+            if isinstance(fn.get("name"), str)
         }
         for fn in local_functions.values():
             annotate_scope(fn.get("body", []))
