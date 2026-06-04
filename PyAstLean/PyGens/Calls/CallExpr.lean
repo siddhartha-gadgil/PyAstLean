@@ -286,6 +286,29 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
               let f := resolvedArgs[0]!
               let xs := resolvedArgs[1]!
               `($pyFilterIdent $f $xs)
+        | .ok "Name", .ok "sorted" => do
+            -- `sorted(iterable)` → `pySort`; `sorted(iterable, key=f, reverse=b)` → `pySortBy`.
+            -- Only `key`/`reverse` keywords are meaningful for Python's `sorted`.
+            for (kwName, _) in keyWordsMap.toList do
+              unless kwName == "key" || kwName == "reverse" do
+                throwError s!"sorted() keyword argument '{kwName}' is not supported yet."
+            unless argsArray.size == 1 do
+              throwError "sorted() expects exactly one positional argument (the iterable)."
+            match keyWordsMap.get? "key", keyWordsMap.get? "reverse" with
+            | none, none =>
+                let pySortIdent := mkIdent ``pySort
+                return ← buildIOPureApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
+                  `($pySortIdent $(resolvedArgs[0]!))
+            | keyOpt, revOpt =>
+                let keyCode ← match keyOpt with
+                  | some kJson => mappedCallableValueCode kJson
+                  | none => `(fun x => x)
+                let revCode ← match revOpt with
+                  | some rJson => getCode rJson `term
+                  | none => `(false)
+                let pySortByIdent := mkIdent ``pySortBy
+                return ← buildIOPureApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
+                  `($pySortByIdent $keyCode $revCode $(resolvedArgs[0]!))
         | .ok "Name", .ok funcName =>
             match pythonBuiltinMap? funcName with
             | some mappedName => funcIdent := (mkIdent mappedName : TSyntax `term)
@@ -390,13 +413,27 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
           return ← `(doElem| let _ := $t)
 
         if attr == "sort" then
-          unless keyWordsMap.isEmpty do
-            throwError "sort() calls do not support keyword arguments yet."
+          -- In-place `list.sort()`: lower to a reassignment of the (immutable-value) list.
+          -- Supports Python's `key=` / `reverse=` keywords; rejects positional args.
+          for (kwName, _) in keyWordsMap.toList do
+            unless kwName == "key" || kwName == "reverse" do
+              throwError s!"sort() keyword argument '{kwName}' is not supported yet."
           unless argsArray.isEmpty do
             throwError "sort() expects no positional arguments."
           let targetIdent ← getCode valueJson `ident
-          let pySortIdent := mkIdent ``pySort
-          return ← `(doElem| $targetIdent:ident := $pySortIdent $targetIdent)
+          match keyWordsMap.get? "key", keyWordsMap.get? "reverse" with
+          | none, none =>
+              let pySortIdent := mkIdent ``pySort
+              return ← `(doElem| $targetIdent:ident := $pySortIdent $targetIdent)
+          | keyOpt, revOpt =>
+              let keyCode ← match keyOpt with
+                | some kJson => mappedCallableValueCode kJson
+                | none => `(fun x => x)
+              let revCode ← match revOpt with
+                | some rJson => getCode rJson `term
+                | none => `(false)
+              let pySortByIdent := mkIdent ``pySortBy
+              return ← `(doElem| $targetIdent:ident := $pySortByIdent $keyCode $revCode $targetIdent)
 
         let valCode ← getCode valueJson `term
         allArgs := allArgs.push valCode

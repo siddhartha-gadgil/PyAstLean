@@ -6,11 +6,11 @@ namespace PyAstLean
 This is for python's `chr()` builtin, which returns a string representing a character whose Unicode code point is the integer passed. For example, `chr(97)` returns the string `'a'`.
 -/
 
-def pyChr (n : Nat) : String :=
+def pyChr (n : Int) : String :=
   if n < 0 || n > 0x10FFFF then
     panic! "ValueError: chr() arg not in range(0x110000)"
   else
-    String.singleton (Char.ofNat n)
+    String.singleton (Char.ofNat n.toNat)
 
 
 /-!

@@ -2,6 +2,7 @@ import Mathlib
 import PyAstLean.Codegen
 import PyAstLean.PyGens.Basic
 import PyAstLean.PyGens.Attributes
+import PyAstLean.PyGens.Core.Subscript
 
 open Lean Meta Elab Term Qq Std
 
@@ -246,6 +247,15 @@ partial def inlineIOTerm (json : Json) : PygenM (TSyntax `term) := do
       | .ok eltJson =>
           if basicJsonUsesIOEffect eltJson then `((← $compTerm)) else pure compTerm
       | _ => pure compTerm
+  | "Subscript" => do
+      -- `foo()[i]` where `foo()` is `IO _`: inline the awaited container into the index
+      -- position so the subscript runs on the value, not on a raw `IO _`.
+      let .ok valueJson := json.getObjValAs? Json "value" | throwError
+        s!"Subscript node does not have a 'value' field: {json}"
+      let .ok sliceJson := json.getObjValAs? Json "slice" | throwError
+        s!"Subscript node does not have a 'slice' field: {json}"
+      let valueCode ← inlineIOTerm valueJson
+      subscriptTermFromValue valueJson sliceJson valueCode
   | _ =>
       return ← getCode json `term
 
@@ -363,6 +373,16 @@ partial def hoistIOTerm (json : Json) : PygenM (Array (TSyntax `doElem) × TSynt
         bindings := bindings ++ pieceBindings
         res ← `($appendIdent $res $pieceTerm)
       return (bindings, res)
+  | "Subscript" => do
+      -- `foo()[i]` in an argument position: hoist the IO container to a binding, then index the
+      -- bound value (`int(input()[0])` → `let s ← input; pyInt (pyGetItem s 0)`).
+      let .ok valueJson := json.getObjValAs? Json "value" | throwError
+        s!"Subscript node does not have a 'value' field: {json}"
+      let .ok sliceJson := json.getObjValAs? Json "slice" | throwError
+        s!"Subscript node does not have a 'slice' field: {json}"
+      let (valueBindings, valueTerm) ← hoistIOTerm valueJson
+      let term ← subscriptTermFromValue valueJson sliceJson valueTerm
+      return (valueBindings, term)
   | _ =>
       return (#[], ← getCode json `term)
 

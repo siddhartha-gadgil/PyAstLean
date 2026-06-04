@@ -104,10 +104,10 @@ def augAssignSyntax : (kind : SyntaxNodeKind) → Json →
           | "lshift" => `($(mkIdent ``PyAstLean.pyShiftLeft) $curTerm $valueCode)
           | "rshift" => `($(mkIdent ``PyAstLean.pyShiftRight) $curTerm $valueCode)
           | _ => throwError s!"Unsupported augmented assignment operator: {op}"
-        match ← subscriptTargetParts? targetJson with
-        | some (containerIdent, indexTerm) =>
-            -- `s[i] += v` rebuilds the container with the updated element.
-            subscriptSetDoElem containerIdent indexTerm updated
+        match ← nestedSubscriptSetDoElem? targetJson updated with
+        | some setStx =>
+            -- `s[i] += v` (and nested `g[i][j] += v`) rebuild the container with the new element.
+            pure setStx
         | none =>
             let targetIdent ← getCode targetJson `ident
             `(doElem| $targetIdent:ident := $updated)

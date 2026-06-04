@@ -94,6 +94,34 @@ def subscriptSetDoElem (containerIdent : TSyntax `ident) (indexTerm value : TSyn
   let setItemIdent := mkIdent ``PyAstLean.pySetItem
   `(doElem| $containerIdent:ident := $setItemIdent $containerIdent $indexTerm $value)
 
+/-- Lower a possibly-nested subscript assignment `a[i]…[k] = value` to a reassignment of the
+base variable. Each level is rebuilt innermost-first with `pySetItem`: `a[i][j] = v` becomes
+`a := pySetItem a i (pySetItem (pyGetItem a i) j v)`. This mirrors Python, where mutating the
+inner list and leaving outer bindings pointing at the (now-rebuilt) value is observationally the
+same for the local variable. Returns `none` when the target is not a subscript (or is an outer
+slice, handled by `sliceTargetParts?`); throws if the base is not a variable. -/
+partial def nestedSubscriptSetDoElem? (target : Json) (value : TSyntax `term) :
+    PygenM (Option (TSyntax `doElem)) := do
+  unless jsonNodeType? target == some "Subscript" do return none
+  let .ok containerJson := target.getObjValAs? Json "value" | throwError
+    s!"Subscript assignment target is missing a 'value' field: {target}"
+  let .ok sliceJson := target.getObjValAs? Json "slice" | throwError
+    s!"Subscript assignment target is missing a 'slice' field: {target}"
+  if jsonNodeType? sliceJson == some "Slice" then return none
+  let indexTerm ← getCode sliceJson `term
+  let setItemIdent := mkIdent ``PyAstLean.pySetItem
+  let containerCode ← getCode containerJson `term
+  let newContainer ← `($setItemIdent $containerCode $indexTerm $value)
+  match jsonNodeType? containerJson with
+  | some "Name" =>
+      let containerIdent ← getCode containerJson `ident
+      return some (← `(doElem| $containerIdent:ident := $newContainer))
+  | some "Subscript" =>
+      nestedSubscriptSetDoElem? containerJson newContainer
+  | _ =>
+      throwError "Subscript assignment requires the base container to be a variable \
+        (`a[i]…[k] = v`); got an unsupported container expression."
+
 /-- Lower an optional slice bound expression to a `some _`/`none` `Option Int` term. -/
 def sliceBoundOptTerm (boundJson? : Option Json) : PygenM (TSyntax `term) := do
   match boundJson? with
@@ -214,10 +242,10 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
                 let sliceSetIdent := mkIdent ``PyAstLean.pySliceSet
                 `(doElem| $containerIdent:ident := $sliceSetIdent $containerIdent $lowerTerm $upperTerm $rhs)
             | none =>
-            match ← subscriptTargetParts? target with
-            | some (containerIdent, indexTerm) =>
-                -- `s[i] = v` rebuilds the list/dict and reassigns the variable.
-                subscriptSetDoElem containerIdent indexTerm rhs
+            match ← nestedSubscriptSetDoElem? target rhs with
+            | some setStx =>
+                -- `s[i] = v` (and nested `g[i][j] = v`) rebuild the container(s) and reassign.
+                pure setStx
             | none =>
                 let nameIdent ← getCode target `ident
                 bindOrAssignLocal nameIdent rhs

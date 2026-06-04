@@ -14,16 +14,11 @@ def isStringConstant (json : Lean.Json) : Bool :=
 open Lean Elab Term Meta
 open PyAstLean
 
-@[pygen "Subscript"]
-def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
-    PygenM (TSyntax kind)
-  | `term, json => do
-    let .ok valueJson := json.getObjValAs? Json "value" | throwError
-      s!"Subscript node does not have a 'value' field or it is not a JSON value: {json}"
-    let .ok sliceJson := json.getObjValAs? Json "slice" | throwError
-      s!"Subscript node does not have a 'slice' field or it is not a JSON value: {json}"
-    let valueCode ← getCode valueJson `term
-
+/-- Build the Lean term for `value[slice]` from an *already-lowered* `valueCode`. Factoring this
+out of the `@[pygen]` entry point lets IO inlining/hoisting rebuild a subscript over an awaited
+container (`foo()[i]` where `foo()` is `IO _`) without re-lowering — and re-awaiting — the base. -/
+def subscriptTermFromValue (valueJson sliceJson : Json) (valueCode : TSyntax `term) :
+    PygenM (TSyntax `term) := do
     let isTuple := match valueJson.getObjValAs? String "node_type" with
     | .ok "Tuple" => true
     | _ => false
@@ -136,6 +131,17 @@ def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
             let sliceCode ← getCode sliceJson `term
             let getIdent := mkIdent `PyAstLean.pyGetItem
             `($getIdent $valueCode $sliceCode)
+
+@[pygen "Subscript"]
+def subscriptSyntax : (kind : SyntaxNodeKind) → Json →
+    PygenM (TSyntax kind)
+  | `term, json => do
+    let .ok valueJson := json.getObjValAs? Json "value" | throwError
+      s!"Subscript node does not have a 'value' field or it is not a JSON value: {json}"
+    let .ok sliceJson := json.getObjValAs? Json "slice" | throwError
+      s!"Subscript node does not have a 'slice' field or it is not a JSON value: {json}"
+    let valueCode ← getCode valueJson `term
+    subscriptTermFromValue valueJson sliceJson valueCode
   | _, _ => throwError s!"Unsupported syntax category for Subscript node"
 
 end PyAstLean

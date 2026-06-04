@@ -50,7 +50,10 @@ instance (priority := low) {α β γ} [HSub α β γ] : PyHSub α β γ where
 instance (priority := high) : PyHSub Nat Nat Int where
   hSub := fun a b => (a : Int) - (b : Int)
 
-@[default_instance]
+-- Not a `default_instance`: this instance must remain available for a genuine `Rat - Int`,
+-- but it must NOT be used to *default* an unconstrained left operand to `Rat`. Marking it
+-- default made `ok -ₚ ng` (with `ng : Int` and `ok` a yet-unconstrained parameter) pin
+-- `ok := Rat`, which then forced integer-only follow-ups like `pyFloorDiv (ok +ₚ ng)` to fail.
 instance (priority := high) : PyHSub Rat Int Rat where
   hSub := fun a b => (a : Rat) - (b : Int)
 

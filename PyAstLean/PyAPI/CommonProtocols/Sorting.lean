@@ -1,4 +1,5 @@
 import Mathlib
+import PyAstLean.PyAPI.CommonProtocols.Iterable
 
 namespace PyAstLean
 
@@ -29,6 +30,22 @@ def pySort {α β : Type} [PySort α β] (value : α) : List β :=
 /-- Boolean comparison derived from `Ord`, suitable for `mergeSort`. -/
 def pyOrdLe [Ord α] (a b : α) : Bool :=
   compare a b != Ordering.gt
+
+/--
+Python `sorted(iterable, key=…, reverse=…)` / `list.sort(key=…, reverse=…)`.
+
+Sorts the iterable's elements by a projected key. `List.mergeSort` is stable, matching
+Python: elements comparing equal under `key` keep their original relative order, and that
+holds for `reverse := true` as well (we negate the strict comparison, not the whole list, so
+equal keys are *not* re-reversed). When `reverse` is `false` the `key`-less form is just
+`key := id`.
+-/
+def pySortBy {α β γ : Type} [PyIterable α β] [Ord γ]
+    (key : β → γ) (reverse : Bool := false) (xs : α) : List β :=
+  let le := fun a b =>
+    let c := compare (key a) (key b)
+    if reverse then c != Ordering.lt else c != Ordering.gt
+  (pyIter xs).mergeSort le
 
 /-- Sorting a list returns its elements in ascending order. -/
 instance [Ord α] : PySort (List α) α where
