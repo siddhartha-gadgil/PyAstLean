@@ -17,10 +17,12 @@ def pyChr (n : Int) : String :=
 This is for python's `ord()` builtin, which returns an integer representing the Unicode code point of a given character. For example, `ord('a')` returns `97`.
 -/
 
-def pyOrd (s : String) : Nat :=
+-- Returns `Int` (not `Nat`): Python's `ord` yields an `int`, and code negates it (`-ord(c)`) or
+-- subtracts code points (`ord(c) - ord('a')`, which can be negative) — both ill-typed on `Nat`.
+def pyOrd (s : String) : Int :=
   if s.length != 1 then
     panic! "TypeError: ord() expected a character, but string of length " ++ toString s.length ++ " found"
   else
-    Char.toNat (String.Pos.Raw.get! s 0)
+    (Char.toNat (String.Pos.Raw.get! s 0) : Int)
 
 end PyAstLean

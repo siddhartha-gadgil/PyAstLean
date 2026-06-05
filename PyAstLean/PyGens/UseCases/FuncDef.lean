@@ -161,6 +161,11 @@ partial def jsonMutatesName (json : Json) (name : String) : Bool :=
             match nodeType with
             | .ok "Assign" | .ok "AugAssign" | .ok "AnnAssign" | .ok "For" =>
                 (json.getObjVal? "target").toOption.any (fun t => assignTargetMutatesName t name)
+            | .ok "Delete" =>
+                -- `del name[i]` rebuilds and reassigns the container, so it mutates `name`.
+                match (json.getObjVal? "targets").toOption.bind (·.getArr?.toOption) with
+                | some targets => targets.any (fun t => assignTargetMutatesName t name)
+                | none => false
             | .ok "Call" =>
                 -- An in-place mutating method (`name.append(x)`, `name.add(x)`, …) is lowered as a
                 -- reassignment of the receiver, so it mutates `name`.
