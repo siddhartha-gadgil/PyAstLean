@@ -278,8 +278,16 @@ left operand's IR, used only to decide membership lowering: a string literal on 
 `in`/`not in` means *substring* containment (`pyStrContainsSubstr`); otherwise membership
 dispatches through `pyContains`, whose `outParam` element type pins the element from the
 container. -/
-def compareApplyTerm (op : String) (leftJson : Json) (leftCode rightCode : TSyntax `term) :
-    PygenM (TSyntax `term) := do
+def compareApplyTerm (op : String) (leftJson : Json) (leftCode rightCode : TSyntax `term)
+    (rightJson : Option Json := none) : PygenM (TSyntax `term) := do
+  -- `x is None` / `x is not None`: lower to `Option.isNone`/`Option.isSome` rather than
+  -- `== none`/`!= none`. This needs no `BEq` and works even when `x`'s element type is still an
+  -- unresolved metavariable — exactly the `[None] * n` placeholder pattern, where the list's
+  -- `Option` element type is only pinned later. (`is`/`is not` against a non-`None` operand keep
+  -- the plain `==`/`!=` lowering below.)
+  if (op == "is" || op == "isnot") && (rightJson.any isNoneConstantJson) then
+    if op == "is" then return ← `($(mkIdent ``Option.isNone) $leftCode)
+    else return ← `($(mkIdent ``Option.isSome) $leftCode)
   match op with
   | "eq" => `($leftCode == $rightCode)
   | "ne" => `($leftCode != $rightCode)
@@ -314,6 +322,16 @@ def binOpSyntax : (kind : SyntaxNodeKind) → Json →
       s!"BinOp node does not have a 'right' field or it is not a JSON value: {json}"
     let leftCode ←  getCode leftJson `term
     let rightCode ← getCode rightJson `term
+    -- List repetition `[..] * n` / `n * [..]`: when an operand is a list literal, target the
+    -- plain `pyListRepeat` (result type concretely `List α`) instead of the `outParam`-result
+    -- `*ₚ`. Otherwise a `[None] * n` placeholder leaves the whole list type postponed, stalling
+    -- every later `pyIter`/`pyGetItem`/`pySetItem` whose element type is only pinned afterwards.
+    if op == "mul" then
+      let repeatIdent := mkIdent ``PyAstLean.pyListRepeat
+      if leftJson.getObjValAs? String "node_type" == .ok "List" then
+        return ← `($repeatIdent $leftCode $rightCode)
+      else if rightJson.getObjValAs? String "node_type" == .ok "List" then
+        return ← `($repeatIdent $rightCode $leftCode)
     binOpApplyTerm op leftCode rightCode
   | _, _ => throwError s!"Unsupported syntax category for BinOp node"
 
@@ -362,7 +380,7 @@ def compareSyntax : (kind : SyntaxNodeKind) → Json →
       s!"Compare node does not have a 'right' field or it is not a JSON value: {json}"
     let leftCode ← getCode leftJson `term
     let rightCode ← getCode rightJson `term
-    compareApplyTerm op leftJson leftCode rightCode
+    compareApplyTerm op leftJson leftCode rightCode (rightJson := some rightJson)
   | _, _ => throwError s!"Unsupported syntax category for Compare node"
 
 @[pygen "IfExp"]

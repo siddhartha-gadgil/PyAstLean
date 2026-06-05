@@ -225,7 +225,7 @@ partial def inlineIOTerm (json : Json) : PygenM (TSyntax `term) := do
       let .ok rightJson := json.getObjValAs? Json "right" | throwError s!"Compare node missing 'right': {json}"
       let leftCode ← inlineIOTerm leftJson
       let rightCode ← inlineIOTerm rightJson
-      compareApplyTerm op leftJson leftCode rightCode
+      compareApplyTerm op leftJson leftCode rightCode (rightJson := some rightJson)
   | "BoolOp" => do
       let .ok op := json.getObjValAs? String "op" | throwError s!"BoolOp node missing 'op': {json}"
       let .ok valuesJson := json.getObjValAs? Json "values" | throwError s!"BoolOp node missing 'values': {json}"

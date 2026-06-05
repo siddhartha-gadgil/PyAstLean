@@ -76,13 +76,29 @@ instance : PyHMul String Int String where
     else
       String.intercalate "" (List.replicate n.toNat s)
 
+/-! Symmetric string repetition `n * s` (Python allows the count on either side). -/
+instance : PyHMul Nat String String where
+  hMul := fun n s => String.intercalate "" (List.replicate n s)
+
+instance : PyHMul Int String String where
+  hMul := fun n s => if n < 0 then "" else String.intercalate "" (List.replicate n.toNat s)
+
+/-- Python list repetition `xs * n` as an ordinary function (not the `outParam`-result `*ₚ`
+operator). Codegen targets this for a *list-literal* operand (`[None] * n`, `[0] * n`) so the
+result type is concretely `List α` even when `α` is still an unresolved metavariable — the
+`outParam` operator would leave the whole list type postponed, which then stalls later
+`pyIter`/`pyGetItem`/`pySetItem` on a `[None] * n` placeholder whose element type only gets
+pinned by a later assignment. A non-positive count yields `[]`, matching Python. -/
+def pyListRepeat {α : Type} (xs : List α) (n : Int) : List α :=
+  if n ≤ 0 then [] else (List.replicate n.toNat xs).flatten
+
 /-- Python list repetition `xs * n` (and the symmetric `n * xs`): repeats the list `n` times,
 matching `[0] * n` style array initialization. A non-positive count yields `[]`. -/
 instance {α : Type} : PyHMul (List α) Int (List α) where
-  hMul := fun xs n => if n ≤ 0 then [] else (List.replicate n.toNat xs).flatten
+  hMul := fun xs n => pyListRepeat xs n
 
 instance {α : Type} : PyHMul Int (List α) (List α) where
-  hMul := fun n xs => if n ≤ 0 then [] else (List.replicate n.toNat xs).flatten
+  hMul := fun n xs => pyListRepeat xs n
 
 @[default_instance]
 instance (priority := high) : PyHMul Rat Rat Rat where

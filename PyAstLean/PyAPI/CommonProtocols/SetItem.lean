@@ -31,6 +31,21 @@ instance {β : Type} : PySetItem (List β) Int β where
     else
       xs.set trueIdx.toNat v
 
+/-- Assigning a concrete value into an `Option`-element list stores it as `some v`. This is the
+`[None] * n` placeholder pattern: the list starts as `none`s (the unset sentinel) and `xs[i] = v`
+fills slot `i` with `some v`, leaving the element type free to unify with `v`. Higher priority
+than the generic list instance so a `List (Option α)` container prefers wrapping a bare `α` over
+demanding an already-`Option` value. -/
+instance (priority := high) {α : Type} : PySetItem (List (Option α)) Int α where
+  setItem xs idx v :=
+    let len := xs.length
+    let lenInt : Int := len
+    let trueIdx := if idx < 0 then lenInt + idx else idx
+    if trueIdx < 0 || trueIdx >= lenInt then
+      panic! "IndexError: list assignment index out of range"
+    else
+      xs.set trueIdx.toNat (some v)
+
 /-- Dictionaries support item assignment as insert/overwrite. -/
 instance {κ ν : Type} [BEq κ] [Hashable κ] : PySetItem (Std.HashMap κ ν) κ ν where
   setItem m k v := m.insert k v

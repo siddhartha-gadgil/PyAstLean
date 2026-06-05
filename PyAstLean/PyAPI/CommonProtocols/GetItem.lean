@@ -31,6 +31,12 @@ methods, all of which are `String`-oriented. An out-of-range index yields the em
 instance : PyGetItem String Int String where
   getItem s i := pyStringGetItemStr s i
 
+/-- Indexing into an `Option`-wrapped value (e.g. an element read from a `[None] * n` placeholder
+list after it has been filled): unwrap and index the contents. A `none` (never-filled) slot
+yields the element default, mirroring how Python would have stored a real value before indexing. -/
+instance {α ι β : Type} [Inhabited α] [Inhabited β] [PyGetItem α ι β] : PyGetItem (Option α) ι β where
+  getItem o i := pyGetItem (o.getD default) i
+
 /-- Dictionaries index by key; a missing key panics with a `KeyError`, matching Python's
 strict `d[k]` (use `d.get(k, default)` for the non-raising form). -/
 instance {κ ν : Type} [BEq κ] [Hashable κ] [Inhabited ν] : PyGetItem (Std.HashMap κ ν) κ ν where
