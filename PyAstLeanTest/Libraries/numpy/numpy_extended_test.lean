@@ -78,11 +78,11 @@ namespace Libraries.numpy
 #guard_msgs in
 #eval pyNumpyStd [2, 4, 6, 8]
 
-/-- info: 3.000000 -/
+/-- info: 3.250000 -/
 #guard_msgs in
 #eval pyNumpyPercentile [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] 25.0
 
-/-- info: 7.000000 -/
+/-- info: 7.750000 -/
 #guard_msgs in
 #eval pyNumpyPercentile [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] 75.0
 
