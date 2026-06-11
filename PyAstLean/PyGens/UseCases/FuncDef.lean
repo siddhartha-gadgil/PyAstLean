@@ -323,7 +323,16 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
           | none =>
               let bodyElems ← functionBodyElems json
               let valueStx ← functionValueSyntax argInfos bodyElems
-              `(def $nameIdent := $valueStx)
+              -- take care of recursion function Type
+              if bodyElems.any (jsonReferencesName · name) then
+                match ← functionReturnTypeSyntax? json with
+                | some retTy =>
+                    match ← functionArrowTypeSyntax? argInfos retTy with
+                    | some fullTy => `(partial def $nameIdent : $fullTy := $valueStx)
+                    | none => `(partial def $nameIdent := $valueStx)
+                | none => `(partial def $nameIdent := $valueStx)
+              else
+                `(def $nameIdent := $valueStx)
         -- Python's leading-underscore convention (`def _foo`) maps to a Lean `private def`.
         applyPrivacy name cmd
     | `term, json => do
