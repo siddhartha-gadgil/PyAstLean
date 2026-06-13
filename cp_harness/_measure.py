@@ -23,7 +23,7 @@ for src in sols:
         f.write(wrapped); pyf = f.name
     leanf = pyf[:-3] + ".lean"
     conv = subprocess.run([PY, os.path.join(ROOT, "src/py2lean.py"), pyf,
-                           "--target", "command"], capture_output=True, text=True, cwd=ROOT)
+                           "--target", "command", "--strict"], capture_output=True, text=True, cwd=ROOT)
     if conv.returncode != 0:
         results.append((name, "CONV_FAIL", conv.stderr.strip().splitlines()[-1][:140] if conv.stderr.strip() else "")); continue
     open(leanf, "w").write(conv.stdout)

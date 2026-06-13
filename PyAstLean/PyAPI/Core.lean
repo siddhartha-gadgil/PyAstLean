@@ -156,4 +156,22 @@ instance {β : Type} : PySlice (List β) where
 instance : PySlice String where
   slice s lo hi step := pyStringSliceStep s lo hi step
 
+/--
+Concrete carrier for a Python construct the transpiler does not support (foreign libraries like
+`logging`/`requests`, unhandled syntax, ...). It carries the original source and prints as its
+`Repr`.
+-/
+structure PyUnsupportedValue where
+  source : String
+  deriving Inhabited, Repr, BEq
+
+/--
+Best-effort fallback sink. Codegen emits `pyUnsupported "<original source>"` in
+every position a dropped statement appears — bare statement (`let _ := …`), assignment
+(`let x := …`), or top-level (`def … := …`). Because it returns a concrete type, the binding
+always elaborates and keeps the variable **declared** (no unconstrained `Inhabited ?m`); the
+[`PyAstLean.Linter`] flags each use with a yellow "not supported" warning.
+-/
+@[inline] def pyUnsupported (source : String) : PyUnsupportedValue := ⟨source⟩
+
 end PyAstLean

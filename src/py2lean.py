@@ -608,11 +608,15 @@ def _sanitize_hole_identifiers(ast_tree):
             n.arg = safe
 
 
-def translate_to_json(source_code, filepath=None):
+def translate_to_json(source_code, filepath=None, best_effort=False):
     """
     Parses Python source code and translates it to a JSON IR.
     If `filepath` is provided, it first runs the annotator code to add type annotations,
     else the source_code argument will be used as-is for translation.
+
+    When `best_effort` is set, unsupported statements (foreign libraries, unhandled syntax) are
+    replaced by `pyUnsupported(...)` placeholders instead of aborting; dropped lines are logged
+    to stderr.
     """
     if filepath is not None:
         logger.debug("Annotating Python source from %s before AST translation.", filepath)
@@ -631,8 +635,22 @@ def translate_to_json(source_code, filepath=None):
     ast_tree = ast.parse(source_code)
     _sanitize_hole_identifiers(ast_tree)
     logger.debug("Parsed Python AST:\n%s", ast.dump(ast_tree, indent=4))
-    translator = ASTToJsonLeanVisitor(source_code)
+    module_dir = str(Path(filepath).resolve().parent) if filepath else None
+    translator = ASTToJsonLeanVisitor(
+        source_code,
+        best_effort=best_effort,
+        supported_modules=SUPPORTED_LIBRARY_IMPORTS,
+        type_only_modules=TYPE_ONLY_IMPORTS,
+        module_dir=module_dir,
+    )
     data = translator.visit(ast_tree)
+    if best_effort and translator.unsupported_log:
+        logger.warning(
+            "best-effort: replaced %d unsupported statement(s) with pyUnsupported placeholders:",
+            len(translator.unsupported_log),
+        )
+        for src in translator.unsupported_log:
+            logger.warning("  unsupported: %s", src)
     annotate_library_imports(data)
     annotate_exception_effects(data)
     annotate_io_effects(data)
@@ -1067,9 +1085,24 @@ def _stamp_class_dispatch(ast_json):
     return ast_json
 
 
-def translate_to_lean(source_code, target="term", filepath = None, imports_add = True):
+def _lean_ident(name):
+    """A safe Lean identifier from a Python name, or None if unusable."""
+    return name if isinstance(name, str) and name.isidentifier() else None
+
+
+def _backend_placeholder_command(stmt, idx):
+    """Best-effort placeholder for a top-level statement the *Lean backend* could not translate
+    (e.g. a `with` statement, which `node_visitor` emits IR for but the backend has no generator
+    for, so it slips past the node-level fallback). Keeps the declaration's name where possible so
+    references still resolve; the linter flags the `pyUnsupported` use."""
+    node_type = stmt.get("node_type", "statement") if isinstance(stmt, dict) else "statement"
+    ident = _lean_ident(stmt.get("name") if isinstance(stmt, dict) else None) or f"__py_unsup_backend_{idx}"
+    return f'def {ident} := pyUnsupported "unsupported {node_type} (backend could not translate)"'
+
+
+def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False):
     """Translate Python source to Lean via JSON IR and the Lean backend executable."""
-    json_ir = translate_to_json(source_code, filepath)
+    json_ir = translate_to_json(source_code, filepath, best_effort=best_effort)
     ast_json = json.loads(json_ir)
     _stamp_class_dispatch(ast_json)
     client = _LEAN_BACKEND
@@ -1083,6 +1116,7 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
             code_parts = []
             mutual_groups = _mutual_recursion_groups(body)
             emitted_funcs = set()
+            backend_unsup = 0
             for stmt in body:
                 # A top-level Python `pass` is a true no-op, so there is no Lean command to emit.
                 if stmt.get("node_type") in {"Pass", "Import", "ImportFrom"}:
@@ -1107,6 +1141,12 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                         module_node = {"node_type": "Module", "body": members}
                         result = invoke_lean_backend(module_node, target, check=False, client=client)
                         if result.get("result") is False:
+                            if best_effort:
+                                logger.warning("best-effort: backend could not translate %s; replaced with pyUnsupported placeholder", name)
+                                code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
+                                backend_unsup += 1
+                                emitted_funcs.update(group)
+                                continue
                             return result
                         if code_key not in result:
                             return {"result": False, "error": f"Missing '{code_key}' in backend response."}
@@ -1115,6 +1155,11 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                         continue
                 result = invoke_lean_backend(stmt, target, check=False, client=client)
                 if result.get("result") is False:
+                    if best_effort:
+                        logger.warning("best-effort: backend could not translate a %s; replaced with pyUnsupported placeholder", stmt.get("node_type"))
+                        code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
+                        backend_unsup += 1
+                        continue
                     return result
                 if code_key not in result:
                     return {"result": False, "error": f"Missing '{code_key}' in backend response."}
@@ -1184,6 +1229,14 @@ def main(argv=None):
         help="Lean target string to pass to the translator (default: term)",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output for debugging")
+    parser.add_argument(
+        "--strict",
+        dest="strict",
+        action="store_true",
+        help="Disable the best-effort fallback (which is ON by default): fail hard on "
+             "unsupported constructs (foreign libraries, unhandled syntax) instead of emitting "
+             "pyUnsupported(...) placeholders.",
+    )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -1192,7 +1245,7 @@ def main(argv=None):
         parser.error("the following arguments are required: file")
 
     source_code = Path(file_path).read_text(encoding="utf-8")
-    result = translate_to_lean(source_code, args.target, file_path)
+    result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict)
 
     if isinstance(result, dict):
         if result.get("result") is False:

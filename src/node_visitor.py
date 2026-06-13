@@ -2,6 +2,7 @@ import json
 import sys
 import ast
 from io import StringIO
+from pathlib import Path
 import tokenize
 
 BINOP_MAP = {
@@ -93,11 +94,156 @@ FUNCTION_DEF_SCHEMA = {
 }
 
 class ASTToJsonLeanVisitorBase:
-    def __init__(self, source_code=""):
+    def __init__(self, source_code="", *, best_effort=False, supported_modules=frozenset(),
+                 type_only_modules=frozenset(), module_dir=None):
         self.source_code = source_code
         self.source_lines = source_code.splitlines()
         self.comment_entries = self._extract_comment_entries(source_code)
         self._next_comment_id = 0
+        # Best-effort fallback: when on, statements that use a foreign (unsupported) library or
+        # that fail to translate are replaced by a `pyUnsupported(...)` placeholder instead of
+        # aborting the whole file. See `docs/libraries_todo.md`.
+        self.best_effort = best_effort
+        self.supported_modules = frozenset(supported_modules)
+        self.type_only_modules = frozenset(type_only_modules)
+        self.module_dir = module_dir
+        self.foreign_names = set()      # locally-bound names that come from foreign modules
+        self.unsupported_log = []       # original source of every dropped/degraded statement
+        self._next_unsup_id = 0         # for naming top-level placeholder defs
+
+    def _is_foreign_module(self, module_name):
+        """A module is foreign if it is neither a supported library, a type-only module, nor a
+        local sibling `.py` we could translate ourselves."""
+        if not isinstance(module_name, str) or not module_name:
+            return False
+        root = module_name.split(".")[0]
+        if root in self.supported_modules or root in self.type_only_modules:
+            return False
+        if self.module_dir and (Path(self.module_dir) / f"{root}.py").exists():
+            return False
+        return True
+
+    def _import_is_foreign(self, stmt):
+        """True for an `import`/`from ... import` of a foreign module."""
+        if isinstance(stmt, ast.Import):
+            return any(self._is_foreign_module(a.name) for a in stmt.names)
+        if isinstance(stmt, ast.ImportFrom):
+            return self._is_foreign_module(stmt.module)
+        return False
+
+    def _compute_foreign_names(self, module_node):
+        """Names bound by foreign imports anywhere in the module (so their later use can be
+        recognised and replaced)."""
+        names = set()
+        for node in ast.walk(module_node):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if self._is_foreign_module(alias.name):
+                        # `import a.b.c` binds `a`; `import a.b as x` binds `x`.
+                        names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                if self._is_foreign_module(node.module):
+                    for alias in node.names:
+                        names.add(alias.asname or alias.name)
+        # Propagate: a value derived from a foreign one is itself foreign
+        # (`logger = logging.getLogger()` makes `logger` foreign), to a fixpoint.
+        assigns = [n for n in ast.walk(module_node) if isinstance(n, (ast.Assign, ast.AnnAssign))]
+        changed = True
+        while changed:
+            changed = False
+            for node in assigns:
+                if node.value is None:
+                    continue
+                if not any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(node.value)):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for tgt in targets:
+                    for nm in ast.walk(tgt):
+                        if isinstance(nm, ast.Name) and nm.id not in names:
+                            names.add(nm.id)
+                            changed = True
+        return names
+
+    def _stmt_uses_foreign(self, stmt):
+        """True if the statement references any foreign-imported name."""
+        if not self.foreign_names:
+            return False
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and node.id in self.foreign_names:
+                return True
+        return False
+
+    def _unsupported_call(self, func_name, source_text):
+        return {
+            "node_type": "Call",
+            "func": {"node_type": "Name", "id": func_name},
+            "args": [{"node_type": "Constant", "value": source_text}],
+            "keywords": {},
+        }
+
+    def _assign_target_json(self, stmt):
+        """If `stmt` is an assignment to a plain Name (or tuple of Names), return its target IR
+        so the placeholder can keep the variable declared; otherwise None."""
+        target = None
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target = stmt.target
+        if isinstance(target, ast.Name):
+            return {"node_type": "Name", "id": target.id}
+        if isinstance(target, (ast.Tuple, ast.List)) and all(
+            isinstance(e, ast.Name) for e in target.elts
+        ):
+            return {"node_type": "Tuple", "elts": [{"node_type": "Name", "id": e.id} for e in target.elts]}
+        return None
+
+    def _make_unsupported_node(self, stmt, top_level=False):
+        """Rewrite an unsupported statement into a `pyUnsupported("<source>")` placeholder,
+        reusing the ordinary Assign/Expr codegen paths. The single concrete-typed sink keeps any
+        assigned variable *declared* (no unconstrained `Inhabited ?m`). A bare statement becomes
+        `let _ := pyUnsupported ...`; at top level it is kept as a synthetic `def __py_unsup_N`
+        rather than removed."""
+        src = ast.get_source_segment(self.source_code, stmt) or "<unsupported>"
+        src = " ".join(src.split())  # collapse to one line for a clean Lean string literal
+        self.unsupported_log.append(src)
+
+        target_json = self._assign_target_json(stmt)
+        if target_json is not None:
+            return {"node_type": "Assign", "target": target_json,
+                    "value": self._unsupported_call("pyUnsupported", src)}
+
+        if top_level:
+            # Don't drop a top-level bare statement — keep it as a named placeholder def.
+            name = f"__py_unsup_{self._next_unsup_id}"
+            self._next_unsup_id += 1
+            return {"node_type": "Assign",
+                    "target": {"node_type": "Name", "id": name},
+                    "value": self._unsupported_call("pyUnsupported", src)}
+        return {"node_type": "Expr", "value": self._unsupported_call("pyUnsupported", src)}
+
+    # Statements whose sub-bodies are themselves translated through `visit_body_statements`; we
+    # must NOT degrade these wholesale on foreign use, or a single foreign line would swallow a
+    # whole function/loop. They recurse so their inner statements degrade individually.
+    _SCOPE_OR_BODY_STMTS = tuple(
+        getattr(ast, name) for name in (
+            "FunctionDef", "AsyncFunctionDef", "ClassDef", "If", "For", "AsyncFor",
+            "While", "Try", "With", "AsyncWith", "Match",
+        ) if hasattr(ast, name)
+    )
+
+    def _translate_body_stmt(self, stmt, top_level=False):
+        """Translate one statement, applying the best-effort fallback when enabled. Returns the
+        IR node, or None to drop the statement (foreign imports)."""
+        if not self.best_effort:
+            return self.visit(stmt)
+        if self._import_is_foreign(stmt):
+            return None  # foreign import contributes nothing; drop it
+        if not isinstance(stmt, self._SCOPE_OR_BODY_STMTS) and self._stmt_uses_foreign(stmt):
+            return self._make_unsupported_node(stmt, top_level=top_level)
+        try:
+            return self.visit(stmt)
+        except NotImplementedError:
+            return self._make_unsupported_node(stmt, top_level=top_level)
 
     def _new_comment_id(self):
         comment_id = str(self._next_comment_id)
@@ -165,7 +311,7 @@ class ASTToJsonLeanVisitorBase:
             "text": text,
         }
 
-    def visit_body_statements(self, statements, *, body_start_line=1, body_end_line=None, allow_docstring=False):
+    def visit_body_statements(self, statements, *, body_start_line=1, body_end_line=None, allow_docstring=False, top_level=False):
         """Translate a statement list while interleaving standalone comments and leading docstrings."""
         if body_end_line is None:
             body_end_line = len(self.source_lines)
@@ -190,7 +336,9 @@ class ASTToJsonLeanVisitorBase:
             if isinstance(stmt, ast.AnnAssign) and stmt.value is None:
                 cursor_line = getattr(stmt, "end_lineno", stmt_line) + 1
                 continue
-            result.append(self.visit(stmt))
+            translated = self._translate_body_stmt(stmt, top_level=top_level)
+            if translated is not None:
+                result.append(translated)
             cursor_line = getattr(stmt, "end_lineno", stmt_line) + 1
 
         result.extend(self._body_comments_between(cursor_line, body_end_line, body_indent))
@@ -514,6 +662,8 @@ class ASTToJsonLeanVisitorBase:
 
     def visit_Module(self, node):
         """Translates ast.Module to a JSON IR node."""
+        if self.best_effort:
+            self.foreign_names = self._compute_foreign_names(node)
         return {
             "node_type": "Module",
             "body": self.visit_body_statements(
@@ -521,6 +671,7 @@ class ASTToJsonLeanVisitorBase:
                 body_start_line=1,
                 body_end_line=len(self.source_lines),
                 allow_docstring=True,
+                top_level=True,
             )
         }
 
