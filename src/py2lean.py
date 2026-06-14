@@ -39,6 +39,10 @@ SUPPORTED_LIBRARY_IMPORTS = get_supported_libraries()
 # library-mapped nor real cross-file Lean modules, so they must be dropped entirely.
 TYPE_ONLY_IMPORTS = {"typing", "typing_extensions", "__future__"}
 
+# Numeric lowering mode sent to the Lean backend: "exact" → Python float becomes Lean ℚ
+# (provable + computable); "approx" → Float (fast, today's behavior). Set per `translate_to_lean`.
+_NUMERIC_MODE = "exact"
+
 # Submodules of a supported library that act as nested namespaces (e.g. `scipy.special`). Their
 # members all flatten into the top-level library's registry, so importing the submodule (e.g.
 # `from scipy import special`) binds a *module*-kind name that resolves `special.factorial`.
@@ -746,7 +750,8 @@ class LeanBackendClient:
     def _one_shot_request(self, ast_json, target, check=True):
         """Fallback backend path that avoids the persistent server when it misbehaves."""
         json_task = json.dumps(
-            {"task": "translate", "ast": ast_json, "target": target, "check": check},
+            {"task": "translate", "ast": ast_json, "target": target, "check": check,
+             "numericMode": _NUMERIC_MODE},
             separators=(",", ":"),
         )
         cmd = ["lake", "exe", "py2lean", json_task, target]
@@ -818,7 +823,8 @@ class LeanBackendClient:
         assert self.proc.stdin is not None
         assert self.proc.stdout is not None
         json_task = json.dumps(
-            {"task": "translate", "ast": ast_json, "target": target, "check": check},
+            {"task": "translate", "ast": ast_json, "target": target, "check": check,
+             "numericMode": _NUMERIC_MODE},
             separators=(",", ":"),
         )
         logger.debug("Sending request to Lean backend: target=%s check=%s", target, check)
@@ -1096,12 +1102,20 @@ def _backend_placeholder_command(stmt, idx):
     for, so it slips past the node-level fallback). Keeps the declaration's name where possible so
     references still resolve; the linter flags the `pyUnsupported` use."""
     node_type = stmt.get("node_type", "statement") if isinstance(stmt, dict) else "statement"
-    ident = _lean_ident(stmt.get("name") if isinstance(stmt, dict) else None) or f"__py_unsup_backend_{idx}"
-    return f'def {ident} := pyUnsupported "unsupported {node_type} (backend could not translate)"'
+    name = stmt.get("name") if isinstance(stmt, dict) else None
+    msg = f"unsupported {node_type} (backend could not translate)"
+    # The main entry-point body (`main'`) is awaited by the `main` wrapper, so it must stay a
+    # runnable `IO Unit` — a `pyUnsupported` *value* there would dangle the wrapper's reference.
+    if name in ("main", "main'"):
+        return f'def {name} : IO Unit := do\n  let _ := pyUnsupported "{msg}"\n  pure ()'
+    ident = _lean_ident(name) or f"__py_unsup_backend_{idx}"
+    return f'def {ident} := pyUnsupported "{msg}"'
 
 
-def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False):
+def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, numeric_mode="exact"):
     """Translate Python source to Lean via JSON IR and the Lean backend executable."""
+    global _NUMERIC_MODE
+    _NUMERIC_MODE = numeric_mode
     json_ir = translate_to_json(source_code, filepath, best_effort=best_effort)
     ast_json = json.loads(json_ir)
     _stamp_class_dispatch(ast_json)
@@ -1237,6 +1251,13 @@ def main(argv=None):
              "unsupported constructs (foreign libraries, unhandled syntax) instead of emitting "
              "pyUnsupported(...) placeholders.",
     )
+    parser.add_argument(
+        "--approx",
+        dest="approx",
+        action="store_true",
+        help="Lower Python float to Lean Float (fast, IEEE) instead of the default exact ℚ "
+             "(Rat). ℚ is computable AND provable; --approx is for speed / transcendentals.",
+    )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -1245,7 +1266,8 @@ def main(argv=None):
         parser.error("the following arguments are required: file")
 
     source_code = Path(file_path).read_text(encoding="utf-8")
-    result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict)
+    result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
+                               numeric_mode=("approx" if args.approx else "exact"))
 
     if isinstance(result, dict):
         if result.get("result") is False:

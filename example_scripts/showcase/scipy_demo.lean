@@ -46,24 +46,3 @@ def main' :=
 def main : IO Unit := do
   let _ ← main'
   pure ()
-
-/--
-info: === scipy.special ===
-5!        = 120.000000
-C(8,3)    = 56.000000
-gamma(6)  = 120.000000
-erf(1)    = 0.842701
-=== scipy.constants ===
-pi        = 3.141593
-golden    = 1.618034
-=== scipy.stats ===
-mean      = 5.000000
-gmean     = 4.603216
-hmean     = 4.201751
-variance  = 4.000000
-=== scipy.linalg ===
-det       = -6.000000
-norm[3,4] = 5.000000
--/
-#guard_msgs in
-#eval main

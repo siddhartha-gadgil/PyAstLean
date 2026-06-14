@@ -35,6 +35,10 @@ def ensureTarget (jsonTask : Json) (target : String) : Json :=
 def runTranslateTask (jsonTask : Json) (ctx : Core.Context) (env : Environment) : IO Json := do
   let target := jsonTask.getObjValAs? String "target" |>.toOption.getD "term"
   let checkCode := jsonTask.getObjValAs? Bool "check" |>.toOption.getD true
+  -- Per-request numeric mode (default exact = ℚ). Set before codegen so the literal/annotation
+  -- sites lower `float` to `ℚ` or `Float` accordingly.
+  let mode := jsonTask.getObjValAs? String "numericMode" |>.toOption.getD "exact"
+  PyAstLean.numericModeRef.set (if mode == "approx" then .approx else .exact)
   let .ok json := jsonTask.getObjValAs? Json "ast"
     | return errorResponse "Invalid JSON: missing 'ast' field or it is not a JSON value"
   let code? ← getCodeIO json target.toName ctx env checkCode
