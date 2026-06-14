@@ -158,10 +158,9 @@ partial def exceptHandlersDoElemSyntax (caughtIdent : TSyntax `ident) (handlers 
           else
             $nextHandler:doElem)
       else
-        let bodyBlock ← `(doElem| do
-            $[$bodyElems:doElem]*)
+        -- Splice the handler statements straight into the `then` branch (a `doSeq`), no `do` wrapper.
         `(doElem| if $cond then
-            $bodyBlock:doElem
+            $[$bodyElems:doElem]*
           else
             $nextHandler:doElem)
 
@@ -197,7 +196,10 @@ partial def tryExceptTerm (json : Json) : PygenM (TSyntax `term) := do
   let .ok finalbodyElems := json.getObjValAs? (Array Json) "finalbody" | throwError
     s!"Try node does not have a 'finalbody' field or it is not a JSON array: {json}"
   let bodyAndElse ← tryBranchBodySyntax (bodyElems ++ orelseElems)
-  let bodyBlock ← sequenceDoElems bodyAndElse (← noopDoElemSyntax)
+  -- Splice the body statements straight into the `captureIOErrors (do …)` block — don't pre-wrap
+  -- them in a `do` (which would nest `do (do …)`).
+  let noopElem ← noopDoElemSyntax
+  let innerBodyElems := if bodyAndElse.isEmpty then #[noopElem] else bodyAndElse
   let catchIdent := mkIdent `caught
   let catchBody ← exceptHandlersDoElemSyntax catchIdent handlersElems.toList
   let exceptIdent := mkIdent ``PyAstLean.PyExcept
@@ -205,7 +207,7 @@ partial def tryExceptTerm (json : Json) : PygenM (TSyntax `term) := do
   -- input) becomes a catchable `PyException`. The real `try … catch` is kept (so `break`/`continue`
   -- in the handler still target the enclosing loop), matching Python's catch-all `except:`.
   let captureIdent := mkIdent ``PyAstLean.PyExcept.captureIOErrors
-  let wrappedBody ← `($captureIdent (do $bodyBlock:doElem))
+  let wrappedBody ← `($captureIdent (do $[$innerBodyElems:doElem]*))
   -- If the try-body (or its `else`) can `return` a value, that value is the result of the whole
   -- `try` expression and must be propagated out; binding-and-discarding with `let _ ←` would pin
   -- the try-branch to `Unit` and clash with a value-returning `catch`. When the body is purely
@@ -220,18 +222,20 @@ partial def tryExceptTerm (json : Json) : PygenM (TSyntax `term) := do
   let bodyYieldsValue :=
     statementListMayYieldValue (bodyElems ++ orelseElems)
       || handlersListMayYieldValue handlersElems
-  let tryBranch ←
-    if bodyYieldsValue then
+  -- Emit the try-branch statements directly into the `try` block (spliced, not wrapped in a `do`).
+  let tryBranchElems : Array (TSyntax `doElem) ←
+    if bodyYieldsValue then do
       let tryValName := mkIdent (← freshName `__py_try_val)
-      `(doElem| do
-          let $tryValName ← $wrappedBody:term
-          return $tryValName)
-    else
-      `(doElem| let _ ← $wrappedBody:term)
+      let bindElem ← `(doElem| let $tryValName ← $wrappedBody:term)
+      let retElem ← `(doElem| return $tryValName)
+      pure #[bindElem, retElem]
+    else do
+      let discardElem ← `(doElem| let _ ← $wrappedBody:term)
+      pure #[discardElem]
   if finalbodyElems.isEmpty then
     `(((do
           try
-            $tryBranch:doElem
+            $[$tryBranchElems:doElem]*
           catch $catchIdent =>
             $catchBody:doElem) : $exceptIdent _))
   else
@@ -239,7 +243,7 @@ partial def tryExceptTerm (json : Json) : PygenM (TSyntax `term) := do
     let finalBlock ← sequenceDoElems finalElems (← noopDoElemSyntax)
     `(((do
           try
-            $tryBranch:doElem
+            $[$tryBranchElems:doElem]*
           catch $catchIdent =>
             $catchBody:doElem
           finally
@@ -271,38 +275,41 @@ def trySyntax : (kind : SyntaxNodeKind) → Json →
         let .ok finalbodyElems := json.getObjValAs? (Array Json) "finalbody" | throwError
           s!"Try node does not have a 'finalbody' field or it is not a JSON array: {json}"
         let bodyAndElse ← tryBranchBodySyntax (bodyElems ++ orelseElems)
-        let bodyBlock ← sequenceDoElems bodyAndElse (← noopDoElemSyntax)
+        -- Splice body statements straight into `captureIOErrors (do …)` (no nested `do (do …)`).
+        let noopElem ← noopDoElemSyntax
+        let innerBodyElems := if bodyAndElse.isEmpty then #[noopElem] else bodyAndElse
         let catchIdent := mkIdent `caught
         let catchBody ← exceptHandlersDoElemSyntax catchIdent handlersElems.toList
         -- Wrap the body in `captureIOErrors` so an `IO` error (e.g. `EOFError` from `input()`)
         -- becomes a catchable `PyException`, while keeping the real `try … catch` so the handler's
         -- `break`/`continue` still target the enclosing loop. Matches Python's catch-all `except:`.
         let captureIdent := mkIdent ``PyAstLean.PyExcept.captureIOErrors
-        let wrappedBody ← `($captureIdent (do $bodyBlock:doElem))
+        let wrappedBody ← `($captureIdent (do $[$innerBodyElems:doElem]*))
         -- See `tryExceptTerm`: propagate the body's value out of the `try` when it (or any handler)
         -- can `return` one, binding it to a fresh name and returning it; otherwise keep the
-        -- effectful `let _ ←` form.
+        -- effectful `let _ ←` form. Splice the statements directly into `try` (no wrapping `do`).
         let bodyYieldsValue :=
           statementListMayYieldValue (bodyElems ++ orelseElems)
             || handlersListMayYieldValue handlersElems
-        let tryBranch ←
-          if bodyYieldsValue then
+        let tryBranchElems : Array (TSyntax `doElem) ←
+          if bodyYieldsValue then do
             let tryValName := mkIdent (← freshName `__py_try_val)
-            `(doElem| do
-                let $tryValName ← $wrappedBody:term
-                return $tryValName)
-          else
-            `(doElem| let _ ← $wrappedBody:term)
+            let bindElem ← `(doElem| let $tryValName ← $wrappedBody:term)
+            let retElem ← `(doElem| return $tryValName)
+            pure #[bindElem, retElem]
+          else do
+            let discardElem ← `(doElem| let _ ← $wrappedBody:term)
+            pure #[discardElem]
         if finalbodyElems.isEmpty then
           `(doElem| try
-              $tryBranch:doElem
+              $[$tryBranchElems:doElem]*
             catch $catchIdent =>
               $catchBody:doElem)
         else
           let finalElems ← tryBranchBodySyntax finalbodyElems
           let finalBlock ← sequenceDoElems finalElems (← noopDoElemSyntax)
           `(doElem| try
-              $tryBranch:doElem
+              $[$tryBranchElems:doElem]*
             catch $catchIdent =>
               $catchBody:doElem
             finally

@@ -25,37 +25,33 @@ noncomputable def euclidean_distance := fun (p1 : List Int) ↦ fun (p2 : List I
 noncomputable def find_nearest_neighbor := fun (target : List Int) ↦ fun (dataset : List (List Int)) ↦
   ((do
       try
-        do
-          let __py_try_val ←
-            PyAstLean.PyExcept.captureIOErrors
-                (do
-                  do
-                    -- Calculate distances using list comprehension
-                    let mut distances :=
-                      (← (PyAstLean.pyIter dataset).mapM fun point => euclidean_distance target point)
-                    -- Find the minimum distance
-                    let mut min_dist := PyAstLean.pyMin distances
-                    -- Find the index of the minimum distance
-                    -- Using a loop since index() might not be supported based on tests
-                    let mut min_index := -(1 : Int)
-                    for _pair in (PyAstLean.pyIter (PyAstLean.pyEnumerate distances))do
-                      let i := Prod.fst _pair
-                      let d := Prod.snd _pair
-                      if d == min_dist then 
-                        min_index := i
-                        break
-                      else
-                        let _ := ()
-                    let __py_ret := (min_dist, dataset⦋min_index⦌)
-                    return __py_ret)
-          return __py_try_val
+        let __py_try_val ←
+          PyAstLean.PyExcept.captureIOErrors
+              (do
+                -- Calculate distances using list comprehension
+                let mut distances := (← (PyAstLean.pyIter dataset).mapM fun point => euclidean_distance target point)
+                -- Find the minimum distance
+                let mut min_dist := PyAstLean.pyMin distances
+                -- Find the index of the minimum distance
+                -- Using a loop since index() might not be supported based on tests
+                let mut min_index := -(1 : Int)
+                for _pair in (PyAstLean.pyIter (PyAstLean.pyEnumerate distances))do
+                  let i := Prod.fst _pair
+                  let d := Prod.snd _pair
+                  if d == min_dist then 
+                    min_index := i
+                    break
+                  else
+                    let _ := ()
+                let __py_ret := (min_dist, dataset⦋min_index⦌)
+                return __py_ret)
+        return __py_try_val
       catch caught =>
         if (caught).OfKind == "ValueError" then 
-          do
-            let e := caught
-            let _ ← pyPrintIO [pyPrintArg s! "Error calculating distances: {e}"]
-            let __py_ret_1 := (-(1.0 : Real), [])
-            return __py_ret_1
+          let e := caught
+          let _ ← pyPrintIO [pyPrintArg s! "Error calculating distances: {e}"]
+          let __py_ret_1 := (-(1.0 : Real), [])
+          return __py_ret_1
         else
           throw caught) :
     PyAstLean.PyExcept _)

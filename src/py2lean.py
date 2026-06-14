@@ -813,7 +813,7 @@ def _annotate_library_imports_in_scope(body, inherited_env=None):
             module_name = stmt.get("module")
             root = _supported_library_root(module_name)
             if root is not None:
-                is_submodule_path = "." in module_name
+                is_submodule_path = isinstance(module_name, str) and "." in module_name
                 for alias_node in stmt.get("names", []):
                     if not isinstance(alias_node, dict):
                         continue
@@ -1473,6 +1473,8 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "",
                     "open PyAstLean",
                     "open Libraries",
+                    "\n",
+                    "set_option linter.all false" # shut up warnings which annoyingly popup in output
                     "\n",
                 ]
                 full_code = "\n".join(preamble_lines) + body_code

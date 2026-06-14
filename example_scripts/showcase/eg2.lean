@@ -7,31 +7,28 @@ open Libraries
 def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List Rat)) ↦
   ((do
       try
-        do
-          let __py_try_val ←
-            PyAstLean.PyExcept.captureIOErrors
-                (do
-                  do
-                    -- Calculate mean of the dataset
-                    let mut m := Libraries.numpy.pyNumpyMean data
-                    let _ ← pyPrintIO [pyPrintArg s! "Dataset Global Mean: {m}"]
-                    -- Center the data by subtracting the mean
-                    -- (Using a manual broadcast-like subtraction for this example)
-                    -- Note: np.subtract is mapped to pyNumpySubtract
-                    let mut centered := Libraries.numpy.pyNumpySubtract data [[m, m], [m, m]]
-                    -- Perform matrix multiplication
-                    -- Note: np.matmul is mapped to pyNumpyMatmul
-                    let mut result := Libraries.numpy.pyNumpyMatmul centered weights
-                    return result)
-          return __py_try_val
+        let __py_try_val ←
+          PyAstLean.PyExcept.captureIOErrors
+              (do
+                -- Calculate mean of the dataset
+                let mut m := Libraries.numpy.pyNumpyMean data
+                let _ ← pyPrintIO [pyPrintArg s! "Dataset Global Mean: {m}"]
+                -- Center the data by subtracting the mean
+                -- (Using a manual broadcast-like subtraction for this example)
+                -- Note: np.subtract is mapped to pyNumpySubtract
+                let mut centered := Libraries.numpy.pyNumpySubtract data [[m, m], [m, m]]
+                -- Perform matrix multiplication
+                -- Note: np.matmul is mapped to pyNumpyMatmul
+                let mut result := Libraries.numpy.pyNumpyMatmul centered weights
+                return result)
+        return __py_try_val
       catch caught =>
         if (caught).OfKind == "ValueError" then 
-          do
-            let e := caught
-            let _ ← pyPrintIO [pyPrintArg s! "Processing failed: {e}"]
-            -- Fallback to a zero matrix if dimensions fail
-            let __py_ret := Libraries.numpy.pyNumpyZeros ((2 : Int), (2 : Int))
-            return __py_ret
+          let e := caught
+          let _ ← pyPrintIO [pyPrintArg s! "Processing failed: {e}"]
+          -- Fallback to a zero matrix if dimensions fail
+          let __py_ret := Libraries.numpy.pyNumpyZeros ((2 : Int), (2 : Int))
+          return __py_ret
         else
           throw caught) :
     PyAstLean.PyExcept _)
