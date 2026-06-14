@@ -3,6 +3,7 @@ import Libraries.functools.Mapping
 import Libraries.math.Mapping
 import Libraries.numpy.Mapping
 import Libraries.scipy.Mapping
+import Libraries.pandas.Mapping
 
 namespace Libraries
 
@@ -19,6 +20,7 @@ def pythonLibraryMap? (moduleName member : String) : Option Lean.Name :=
   | "math" => math.pythonMathMemberMap? member
   | "numpy" => numpy.pythonNumpyMemberMap? member
   | "scipy" => scipy.pythonScipyMemberMap? member
+  | "pandas" => pandas.pythonPandasMemberMap? member
   | _ => none
 
 end Libraries
