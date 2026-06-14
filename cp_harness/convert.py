@@ -93,7 +93,7 @@ def wrap_for_main(source):
 def translate(py_path):
     """Run py2lean on a file; return (ok, lean_code_or_error)."""
     proc = subprocess.run(
-        ["python3", str(PY2LEAN), str(py_path), "--target", "command"],
+        ["python3", str(PY2LEAN), str(py_path), "--target", "command", "--strict"],
         capture_output=True,
         text=True,
     )

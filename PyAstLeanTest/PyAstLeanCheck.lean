@@ -316,7 +316,9 @@ def runOneCase (pyPath : System.FilePath) : IO (Except String Unit) := do
     | .error err => return .error err
   let out ← IO.Process.output {
     cmd := "python3"
-    args := #[ "src/py2lean.py", pyPathStr, "--target", spec.target ]
+    -- `--strict` keeps golden tests deterministic: the best-effort fallback is the CLI default,
+    -- but PALC must exercise real (strict) translation, incl. expected-failure cases.
+    args := #[ "src/py2lean.py", pyPathStr, "--target", spec.target, "--strict" ]
   }
   if out.exitCode != spec.exitCode then
     return .error s!"{pyPathStr}: expected exit {spec.exitCode}, got {out.exitCode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"

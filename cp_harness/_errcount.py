@@ -11,7 +11,7 @@ for src in sorted(glob.glob(os.path.join(ROOT, "cp_harness/dataset/*/solutions/s
         print(f"WRAP {name}: {e}"); continue
     pyf = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp"); pyf.write(wrapped); pyf.close()
     leanf = pyf.name[:-3] + ".lean"
-    conv = subprocess.run([PY, os.path.join(ROOT, "src/py2lean.py"), pyf.name, "--target", "command"],
+    conv = subprocess.run([PY, os.path.join(ROOT, "src/py2lean.py"), pyf.name, "--target", "command", "--strict"],
                           capture_output=True, text=True, cwd=ROOT)
     if conv.returncode != 0:
         print(f"CONV {name}"); continue
