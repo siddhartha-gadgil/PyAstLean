@@ -82,8 +82,10 @@ instance : PyPrintable Int where
 instance : PyPrintable Nat where
   pyStringify n := toString n
 
+/-- Rationals print as a Python-style **decimal** (`3/2` → `1.5`, via the float value), not the
+fraction `n/d` — matching `print` output when `float` lowers to `ℚ` (exact mode). -/
 instance : PyPrintable Rat where
-  pyStringify q := toString q
+  pyStringify q := toString (Rat.toFloat q)
 
 /-- Python exceptions print with their existing `ToString` rendering. -/
 instance : PyPrintable PyException where

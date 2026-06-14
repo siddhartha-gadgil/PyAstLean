@@ -7,6 +7,28 @@ open Lean Meta Elab Term Qq Std
 namespace PyAstLean
 
 /-!
+## Numeric lowering mode
+
+Controls how a Python `float` is lowered: `exact` → Lean `ℚ` (an exact, *computable* and
+*provable* ordered field — the default, so generated functions can be reasoned about with
+`ring`/`nlinarith`); `approx` → `Float` (IEEE; fast and computable but not a ring, so unprovable).
+The mode is set per backend request (see `py2lean.lean`) into a global ref the codegen reads.
+-/
+
+inductive NumericMode where
+  | exact
+  | approx
+  deriving Repr, BEq, Inhabited
+
+initialize numericModeRef : IO.Ref NumericMode ← IO.mkRef .exact
+
+/-- Read the current numeric lowering mode (set per backend request). -/
+def getNumericMode : IO NumericMode := numericModeRef.get
+
+/-- True when `float` should lower to `ℚ` (the default exact mode). -/
+def numericModeIsExact : IO Bool := return (← getNumericMode) == .exact
+
+/-!
 ## Code generation from JSON data
 
 This module provides a way to generate Lean code from JSON data in an extensible way. The main function is `getCode`, which takes a `pygenerator` a Json object and a syntax category, and returns the corresponding syntax (in the monad `PygenM`) or throws an error.

@@ -118,4 +118,60 @@ private def parseFloatString (s : String) : Float :=
 instance : PyFloatCast String where
   pyFloat s := parseFloatString s
 
+/-! ## Exact-mode `float(...)` → `ℚ`
+
+In the default (exact) numeric mode `float(x)` lowers to `pyRat`, producing an exact rational.
+Notably a decimal string parses *exactly* (`float("0.1") = 1/10`), and `int`/`bool`/`Rat` inputs
+coerce losslessly. `inf`/`nan` have no `ℚ` value, so the string parser degrades them to `0`
+(exact mode does not model them — use `--approx` for `float('inf')`). -/
+
+/-- Typeclass for exact-mode `float(...)` coercions producing `ℚ`. -/
+class PyRatCast (α : Type) where
+  pyRat : α → Rat
+
+/-- Dispatch exact-mode float coercions to `ℚ`. -/
+def pyRat {α : Type} [PyRatCast α] (x : α) : Rat :=
+  PyRatCast.pyRat x
+
+instance : PyRatCast Rat where pyRat x := x
+instance : PyRatCast Int where pyRat x := (x : Rat)
+instance : PyRatCast Nat where pyRat x := (x : Rat)
+instance : PyRatCast Bool where
+  pyRat | true => 1 | false => 0
+
+/-- `10 ^ n` as a `ℚ` via repeated multiplication. -/
+private def tenPowNatRat : Nat → Rat
+  | 0 => 1
+  | n + 1 => 10 * tenPowNatRat n
+
+/-- Parse a Python-style decimal float literal into an *exact* `ℚ` (sign, integer/fractional
+parts, optional `e`/`E` exponent). `inf`/`nan` are not representable in `ℚ` and degrade to `0`. -/
+private def parseRatString (s : String) : Rat :=
+  let t := s.trimAscii.toString
+  if t == "inf" || t == "+inf" || t == "Infinity" || t == "-inf" || t == "-Infinity" || t == "nan" then 0
+  else
+    let (neg, body) :=
+      if t.startsWith "-" then (true, (t.drop 1).toString)
+      else if t.startsWith "+" then (false, (t.drop 1).toString)
+      else (false, t)
+    let lower := body.map (fun c => if c == 'E' then 'e' else c)
+    let (mant, exp) :=
+      match lower.splitOn "e" with
+      | [m] => (m, (0 : Int))
+      | [m, e] => (m, e.toInt?.getD 0)
+      | _ => (lower, 0)
+    let (ip, fp) :=
+      match mant.splitOn "." with
+      | [i] => (i, "")
+      | [i, f] => (i, f)
+      | _ => (mant, "")
+    let intVal : Nat := ip.toNat?.getD 0
+    let fracVal : Nat := fp.toNat?.getD 0
+    let base : Rat := (intVal : Rat) + (fracVal : Rat) / tenPowNatRat fp.length
+    let scale : Rat := if exp ≥ 0 then tenPowNatRat exp.toNat else 1 / tenPowNatRat (-exp).toNat
+    let v := base * scale
+    if neg then -v else v
+
+instance : PyRatCast String where pyRat s := parseRatString s
+
 end PyAstLean

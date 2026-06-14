@@ -49,6 +49,13 @@ def pythonBuiltinMap? (name : String) : Option Lean.Name :=
   | "list" => some ``pyList
   | _ => none
 
+/-- Exact-mode overrides for builtins whose numeric result type changes when `float` lowers to
+`ℚ`. Consulted *before* `pythonBuiltinMap?` in the default mode; `none` falls through to it. -/
+def pythonBuiltinMapExact? (name : String) : Option Lean.Name :=
+  match name with
+  | "float" => some ``pyRat
+  | _ => none
+
 /-- Associativity for folding a binary runtime function over a variadic builtin's arguments. -/
 inductive BuiltinFoldDir where
   | left
