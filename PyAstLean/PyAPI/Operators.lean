@@ -288,6 +288,57 @@ noncomputable instance (priority := high) : PyHDiv Nat Real Real where hDiv a b 
 noncomputable instance (priority := high) : PyHDiv Real Nat Real where hDiv a b := a / (b : ℝ)
 
 
+/-! ## Auto-derived mixed numeric arithmetic — `PyNumJoin`
+
+Rather than writing every mixed pair out four times (once per `+ - * /`), `PyNumJoin α β γ` names the
+common result type `γ` of mixing `α` and `β` **once**, together with the two coercions into it. A
+*single* generic instance per operator then derives all four. Adding a new numeric type later means
+adding its coercion pairs here once — not `4 ×` new operator instances.
+
+These are LOW priority and NOT `@[default_instance]`: the carefully-tuned homogeneous defaults above
+(`Rat`/`Int` `@[default_instance]`, the `@[simp] rfl` lemmas) still win for same-type and
+unconstrained-operand resolution; `PyNumJoin` only fires for a genuinely-mixed *concrete* pair that
+no higher-priority instance already covers (e.g. `ℚ × Float`, which arises when a run-twin function
+multiplies a shared `ℚ` constant by a `Float` local). The `ℝ` mixes stay explicit (`noncomputable`)
+just above; this covers the computable tower `ℕ ⊂ ℤ ⊂ ℚ` and `Float`. -/
+class PyNumJoin (α β : Type) (γ : outParam Type) where
+  coeL : α → γ
+  coeR : β → γ
+
+namespace PyNumJoin
+/-- `α` mixed with itself does not need a join (the homogeneous `[HAdd α α α]` instance handles it);
+`mk2 f g` builds the two-coercion record for a genuinely mixed pair. -/
+abbrev mk2 {α β γ} (f : α → γ) (g : β → γ) : PyNumJoin α β γ := ⟨f, g⟩
+end PyNumJoin
+
+-- ℕ ⊂ ℤ
+instance : PyNumJoin Nat Int Int := .mk2 (Int.ofNat) id
+instance : PyNumJoin Int Nat Int := .mk2 id (Int.ofNat)
+-- · ⊂ ℚ
+instance : PyNumJoin Nat Rat Rat := .mk2 (fun n => (n : ℚ)) id
+instance : PyNumJoin Rat Nat Rat := .mk2 id (fun n => (n : ℚ))
+instance : PyNumJoin Int Rat Rat := .mk2 (fun n => (n : ℚ)) id
+instance : PyNumJoin Rat Int Rat := .mk2 id (fun n => (n : ℚ))
+-- · ⊂ Float  (ℚ → Float is `Rat.toFloat`; this is the pair the prove/run twin split needs)
+instance : PyNumJoin Nat Float Float := .mk2 (fun n => Float.ofNat n) id
+instance : PyNumJoin Float Nat Float := .mk2 id (fun n => Float.ofNat n)
+instance : PyNumJoin Int Float Float := .mk2 (fun n => Float.ofInt n) id
+instance : PyNumJoin Float Int Float := .mk2 id (fun n => Float.ofInt n)
+instance : PyNumJoin Rat Float Float := .mk2 Rat.toFloat id
+instance : PyNumJoin Float Rat Float := .mk2 id Rat.toFloat
+
+-- One generic instance per operator derives `+ - * /` for every `PyNumJoin` pair. Project through
+-- the named `j` (its `β` is fixed) — a bare `PyNumJoin.coeL a` would leave `β` a metavar.
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Add γ] : PyHAdd α β γ where
+  hAdd a b := j.coeL a + j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Sub γ] : PyHSub α β γ where
+  hSub a b := j.coeL a - j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Mul γ] : PyHMul α β γ where
+  hMul a b := j.coeL a * j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Div γ] : PyHDiv α β γ where
+  hDiv a b := j.coeL a / j.coeR b
+
+
 /-- Python-style floor division: `a // b` truncates toward negative infinity. -/
 def pyFloorDiv (a b : Int) : Int :=
   if b == 0 then
