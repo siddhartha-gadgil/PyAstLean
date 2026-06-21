@@ -192,9 +192,15 @@ class Lean4Annotator(cst.CSTTransformer):
         self,
         stub_annotations: dict[str, TypingAny],
         flow_types: dict[tuple[str | None, str | None, str], str],
+        ode_callbacks: dict[str, list[str]] | None = None,
     ) -> None:
         self.stub_annotations: dict[str, TypingAny] = stub_annotations
         self.flow_types: dict[tuple[str | None, str | None, str], str] = flow_types
+        # `func name -> param type strings` for derivative callbacks passed to scipy integrators.
+        # pyrefly can't infer a nested callback's param types, so we apply the integrator's known
+        # signature (see `scan_ode_callbacks`). Without this, the callback's params stay `Any`,
+        # which in exact (ℚ) mode leaves operands like `state[0]` untyped and ambiguous.
+        self.ode_callbacks: dict[str, list[str]] = ode_callbacks or {}
         self.current_class: str | None = None
         self.current_function: str | None = None
         self.function_stack: list[str] = []
@@ -239,6 +245,26 @@ class Lean4Annotator(cst.CSTTransformer):
             updated_node = updated_node.with_changes(
                 returns=new_returns,
                 params=updated_node.params.with_changes(params=new_params),
+            )
+
+        # Apply a scipy-integrator callback signature (e.g. odeint's `f(state, t)` is
+        # `(list[float], float)`) to any still-untyped param. pyrefly leaves a nested callback's
+        # params as `Any`; without a type the derivative body's `state[0]` operands are ambiguous
+        # in exact (ℚ) mode. This is the integrator's documented contract, applied by position.
+        cb_sig: list[str] | None = self.ode_callbacks.get(func_name)
+        if cb_sig:
+            cb_params: list[cst.Param] = []
+            for i, param in enumerate(updated_node.params.params):
+                new_param = param
+                cur: cst.BaseExpression | None = param.annotation.annotation if param.annotation else None
+                cur_str: str = node_to_str(cur) if cur else ""
+                if (cur is None or cur_str in {"Any", "Incomplete", ""}) and i < len(cb_sig):
+                    new_param = param.with_changes(
+                        annotation=cst.Annotation(annotation=cst.parse_expression(cb_sig[i]))
+                    )
+                cb_params.append(new_param)
+            updated_node = updated_node.with_changes(
+                params=updated_node.params.with_changes(params=cb_params),
             )
 
         # Fill missing/weak parameter annotations with local flow-derived types.
@@ -1320,6 +1346,47 @@ class FlowTracker(cst.CSTVisitor):
         return res
 
 
+def _func_tail_name(func: cst.BaseExpression) -> str | None:
+    """Last name component of a call target: `odeint` for both `odeint` and `scipy.integrate.odeint`."""
+    if isinstance(func, cst.Name):
+        return func.value
+    if isinstance(func, cst.Attribute):
+        return func.attr.value
+    return None
+
+
+# scipy integrators that take a derivative callback as their FIRST positional argument, with that
+# callback's parameter signature (by position). `odeint(f, y0, t)` calls `f(state, t)`; `solve_ivp`
+# calls `f(t, y)` (reversed) — per the SciPy docs.
+_ODE_CALLBACK_SIGS: dict[str, list[str]] = {
+    "odeint": ["list[float]", "float"],
+    "solve_ivp": ["float", "list[float]"],
+}
+
+
+class _OdeCallbackScanner(cst.CSTVisitor):
+    """Collect `func name -> param signature` for functions passed as the derivative callback to a
+    scipy integrator, so their (otherwise un-inferrable) parameters can be typed from the contract."""
+
+    def __init__(self) -> None:
+        self.callbacks: dict[str, list[str]] = {}
+
+    def visit_Call(self, node: cst.Call) -> None:
+        sig: list[str] | None = _ODE_CALLBACK_SIGS.get(_func_tail_name(node.func) or "")
+        if not sig or not node.args:
+            return
+        cb: cst.BaseExpression = node.args[0].value
+        if isinstance(cb, cst.Name):
+            self.callbacks[cb.value] = sig
+
+
+def scan_ode_callbacks(tree: cst.Module) -> dict[str, list[str]]:
+    """Map each scipy-integrator derivative-callback function name to its param signature."""
+    scanner = _OdeCallbackScanner()
+    tree.visit(scanner)
+    return scanner.callbacks
+
+
 def annotate_file(file_path: str, write_back: bool = True) -> str:
     """Prepare a Python file for Lean translation.
 
@@ -1429,7 +1496,8 @@ def annotate_file(file_path: str, write_back: bool = True) -> str:
             for k, v in types.items()
         }
         # Apply the final rewrite once we have a stable view of inferred types.
-        final_tree: cst.Module = tree.visit(Lean4Annotator(stub_data, final_flow))
+        ode_callbacks: dict[str, list[str]] = scan_ode_callbacks(tree)
+        final_tree: cst.Module = tree.visit(Lean4Annotator(stub_data, final_flow, ode_callbacks))
         code: str = (
             final_tree.code
             .replace("Incomplete", "Any")
