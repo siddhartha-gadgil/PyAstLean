@@ -16,7 +16,9 @@ def inferSimpleValueTypeSyntax? (json : Json) : PygenM (Option (TSyntax `term)) 
       match value with
       | .num (JsonNumber.mk _ exponent) =>
           if json.getObjValAs? String "python_literal_kind" == .ok "float" then
-            return some (mkIdent ``Float)
+            match ← getNumericMode with
+            | .exact => return some (mkIdent ``Rat)
+            | .approx => return some (mkIdent ``Float)
           else if exponent == 0 then
             return some (mkIdent ``Int)
           else

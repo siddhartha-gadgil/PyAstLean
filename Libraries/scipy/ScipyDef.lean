@@ -1,4 +1,5 @@
 import Mathlib
+import Libraries.numpy.NumpyDef
 
 namespace Libraries.scipy
 
@@ -23,6 +24,30 @@ instance : PyScipyFloatArg Rat where toFloat := Rat.toFloat
 instance : PyScipyFloatArg Int where toFloat x := Rat.toFloat (x : Rat)
 instance : PyScipyFloatArg Nat where toFloat x := Rat.toFloat (x : Rat)
 instance : PyScipyFloatArg Bool where toFloat b := if b then 1.0 else 0.0
+
+/-- Maps a scipy scalar entry type to the numeric *field* its purely-algebraic reductions
+(`tmean`, `hmean`, `det`, …) should compute in. `Float → Float` and `Rat → Rat` stay in their
+own field (so exact-mode `ℚ` results compose with surrounding `ℚ` code and `--approx` `Float`
+results are unchanged); integral/bool scalars promote to `Float`. Result type is an `outParam`. -/
+class PyScipyCompute (α : Type) (γ : outParam Type) where
+  cast : α → γ
+
+instance : PyScipyCompute Float Float := ⟨id⟩
+instance : PyScipyCompute Rat Rat := ⟨id⟩
+instance : PyScipyCompute Int Float := ⟨fun x => Rat.toFloat (x : Rat)⟩
+instance : PyScipyCompute Nat Float := ⟨fun x => Rat.toFloat (x : Rat)⟩
+instance : PyScipyCompute Bool Float := ⟨fun b => if b then 1.0 else 0.0⟩
+noncomputable instance : PyScipyCompute ℝ ℝ := ⟨id⟩
+
+/-- `Nat → γ` for the numeric compute types. `Float` has NO Mathlib `NatCast` (it's an opaque
+core type), so it can't use the generic `(n : γ)` coercion that `ℚ`/`ℝ` get — this bundles the
+conversion so the algebraic stats below stay polymorphic across `Float`/`ℚ`/`ℝ`. -/
+class PyOfNatScalar (γ : Type) where
+  ofNatγ : Nat → γ
+
+instance : PyOfNatScalar Float := ⟨Float.ofNat⟩
+instance : PyOfNatScalar Rat := ⟨fun n => (n : Rat)⟩
+noncomputable instance : PyOfNatScalar ℝ := ⟨fun n => (n : ℝ)⟩
 
 /-- Sum a list of floats (no `List.sum` specialisation needed downstream). -/
 private def fsum (xs : List Float) : Float :=
@@ -91,19 +116,72 @@ def erfFloat (x : Float) : Float :=
 def pyScipyErf {α : Type} [PyScipyFloatArg α] (x : α) : Float :=
   erfFloat (toFloat x)
 
+/-! ## Exact (`ℝ`) scipy scalars (default mode)
+
+`noncomputable` `ℝ` versions of the scalar constants/specials that have a Mathlib equivalent
+(`pi → Real.pi`, `gamma → Real.Gamma`). `erf` has no Mathlib `ℝ` form, so it stays `Float` and
+needs `--approx` if combined with rationals. -/
+
+/-- Inputs acceptable to the exact (`ℝ`) scipy surface (`ℚ`/`ℤ`/`ℕ`/`ℝ` → `ℝ`). -/
+class PyScipyRealArg (α : Type) where
+  toReal : α → ℝ
+
+noncomputable instance : PyScipyRealArg ℝ := ⟨id⟩
+noncomputable instance : PyScipyRealArg Rat := ⟨fun q => (q : ℝ)⟩
+noncomputable instance : PyScipyRealArg Int := ⟨fun n => (n : ℝ)⟩
+noncomputable instance : PyScipyRealArg Nat := ⟨fun n => (n : ℝ)⟩
+
+noncomputable def pyScipyPiR : ℝ := Real.pi
+noncomputable def pyScipyGammaR {α : Type} [PyScipyRealArg α] (x : α) : ℝ :=
+  Real.Gamma (PyScipyRealArg.toReal x)
+
+/-- `scipy.stats.gmean` over `ℝ` (exact mode): `exp(mean(log xs))` with Mathlib's `Real.*`. -/
+noncomputable def pyScipyGmeanR {α : Type} [PyScipyRealArg α] (xs : List α) : ℝ :=
+  let ys := xs.map PyScipyRealArg.toReal
+  if ys.isEmpty then 0
+  else Real.exp ((ys.map Real.log).foldl (· + ·) 0 / (ys.length : ℝ))
+
+/-- `scipy.linalg.norm` over `ℝ` (exact mode): the Euclidean / Frobenius norm via `Real.sqrt`,
+overloaded across vectors and matrices. -/
+class ScipyRealNormable (α : Type) where
+  scipyNormR : α → ℝ
+
+noncomputable instance {β} [PyScipyRealArg β] : ScipyRealNormable (List β) where
+  scipyNormR xs :=
+    Real.sqrt ((xs.map (fun x => let r := PyScipyRealArg.toReal x; r * r)).foldl (· + ·) 0)
+
+noncomputable instance {β} [PyScipyRealArg β] : ScipyRealNormable (List (List β)) where
+  scipyNormR m :=
+    Real.sqrt ((m.map (fun row =>
+      (row.map (fun x => let r := PyScipyRealArg.toReal x; r * r)).foldl (· + ·) 0)).foldl (· + ·) 0)
+
+noncomputable def pyScipyNormR {α : Type} [ScipyRealNormable α] (x : α) : ℝ :=
+  ScipyRealNormable.scipyNormR x
+
 /-! ## scipy.stats -/
 
-/-- `scipy.stats.tmean` with no trimming limits — the arithmetic mean. -/
-def pyScipyTmean (xs : List Float) : Float :=
-  if xs.isEmpty then 0.0 else fsum xs / Float.ofNat xs.length
+/-- Sum a list over any additive type. -/
+private def gsum {γ} [Add γ] [Zero γ] (xs : List γ) : γ := xs.foldl (· + ·) 0
 
-/-- `scipy.stats.gmean` — geometric mean `exp(mean(log xs))`. -/
-def pyScipyGmean (xs : List Float) : Float :=
-  if xs.isEmpty then 0.0 else Float.exp (fsum (xs.map Float.log) / Float.ofNat xs.length)
+/-- `scipy.stats.tmean` with no trimming limits — the arithmetic mean. Computes in the entries'
+type (`ℚ` in exact mode, `Float` in `--approx`), so the result composes with surrounding code.
+Constraints are the concrete ops used (NOT `Field`, which `Float` lacks). -/
+def pyScipyTmean {α γ} [PyScipyCompute α γ] [Add γ] [Zero γ] [Div γ] [PyOfNatScalar γ]
+    (xs : List α) : γ :=
+  let ys := xs.map PyScipyCompute.cast
+  if ys.isEmpty then 0 else gsum ys / PyOfNatScalar.ofNatγ ys.length
 
-/-- `scipy.stats.hmean` — harmonic mean `n / Σ(1/xᵢ)`. -/
-def pyScipyHmean (xs : List Float) : Float :=
-  if xs.isEmpty then 0.0 else Float.ofNat xs.length / fsum (xs.map (fun x => 1.0 / x))
+/-- `scipy.stats.hmean` — harmonic mean `n / Σ(1/xᵢ)`, computed in the entries' type. -/
+def pyScipyHmean {α γ} [PyScipyCompute α γ] [Add γ] [Zero γ] [One γ] [Div γ] [PyOfNatScalar γ]
+    (xs : List α) : γ :=
+  let ys := xs.map PyScipyCompute.cast
+  if ys.isEmpty then 0 else PyOfNatScalar.ofNatγ ys.length / gsum (ys.map (fun x => 1 / x))
+
+/-- `scipy.stats.gmean` — geometric mean `exp(mean(log xs))`. Transcendental, so it stays on
+`Float`; use `--approx`, or the `ℝ` variant `pyScipyGmeanR` selected in exact mode. -/
+def pyScipyGmean {α} [PyScipyFloatArg α] (xs : List α) : Float :=
+  let ys := xs.map toFloat
+  if ys.isEmpty then 0.0 else Float.exp (fsum (ys.map Float.log) / Float.ofNat ys.length)
 
 /-! ## scipy.linalg -/
 
@@ -120,17 +198,69 @@ instance : ScipyNormable (List (List Float)) where
 def pyScipyNorm {α : Type} [ScipyNormable α] (x : α) : Float :=
   ScipyNormable.scipyNorm x
 
-/-- `scipy.linalg.det` via Laplace (cofactor) expansion along the first row. Exact on `Float`;
-fine for the small matrices generated code typically builds. -/
-partial def pyScipyDet (m : List (List Float)) : Float :=
+/-- `scipy.linalg.det` via Laplace (cofactor) expansion along the first row, over any field
+(`Float` in `--approx`, `ℚ` in exact mode). -/
+partial def pyScipyDetField {γ} [Add γ] [Mul γ] [Neg γ] [Zero γ] [One γ] (m : List (List γ)) : γ :=
   match m with
-  | [] => 1.0
-  | [row] => row.headD 0.0
+  | [] => 1
+  | [row] => row.headD 0
   | first :: _ =>
     let n := m.length
-    (List.range n).foldl (init := 0.0) (fun acc j =>
+    (List.range n).foldl (init := 0) (fun acc j =>
       let minor := (m.drop 1).map (fun row => row.eraseIdx j)
-      let sign := if j % 2 == 0 then 1.0 else -1.0
-      acc + sign * (first.getD j 0.0) * pyScipyDet minor)
+      let sign : γ := if j % 2 == 0 then 1 else -1
+      acc + sign * (first.getD j 0) * pyScipyDetField minor)
+
+/-- `scipy.linalg.det` — determinant of a square matrix, computed in the entries' field. -/
+def pyScipyDet {α γ} [PyScipyCompute α γ] [Add γ] [Mul γ] [Neg γ] [Zero γ] [One γ]
+    (m : List (List α)) : γ :=
+  pyScipyDetField (m.map (fun row => row.map PyScipyCompute.cast))
+
+/-! ## scipy.integrate -/
+
+open scoped Libraries.numpy.PyOdeScalar
+open Libraries.numpy (PyOdeScalar)
+
+open scoped Libraries.numpy.PyOdeScalar in
+/-- Element-wise `a + s · b` on equal-length vectors over any `PyOdeScalar`. -/
+private def vecAxpy {α} [PyOdeScalar α] (s : α) (a b : List α) : List α :=
+  (a.zip b).map (fun (x, y) => x +ₒ s *ₒ y)
+
+open scoped Libraries.numpy.PyOdeScalar in
+/-- One classical RK4 step of `y' = f(y, t)` over a step of size `dt`. -/
+private def rk4Step {α} [PyOdeScalar α] (f : List α → α → List α) (y : List α) (t dt : α) :
+    List α :=
+  let two := PyOdeScalar.ofNat (α := α) 2
+  let half := dt /ₒ two
+  let k1 := f y t
+  let k2 := f (vecAxpy half y k1) (t +ₒ half)
+  let k3 := f (vecAxpy half y k2) (t +ₒ half)
+  let k4 := f (vecAxpy dt y k3) (t +ₒ dt)
+  let incr := (k1.zip (k2.zip (k3.zip k4))).map (fun (a, b, c, d) => a +ₒ two *ₒ b +ₒ two *ₒ c +ₒ d)
+  vecAxpy (dt /ₒ PyOdeScalar.ofNat (α := α) 6) y incr
+
+open scoped Libraries.numpy.PyOdeScalar in
+/-- RK4 integrator (the runnable `@[implemented_by]` impl behind the opaque `pyScipyOdeint`). -/
+def pyScipyOdeintImpl {α} [PyOdeScalar α] (f : List α → α → List α) (y0 : List α) (ts : List α) :
+    List (List α) :=
+  match ts with
+  | [] => []
+  | t0 :: rest =>
+    let stepFn := fun (st : List (List α) × List α × α) (tcur : α) =>
+      let (acc, yprev, tprev) := st
+      let ynext := rk4Step f yprev tprev (tcur -ₒ tprev)
+      (acc ++ [ynext], ynext, tcur)
+    let (states, _, _) := rest.foldl stepFn ([y0], y0, t0)
+    states
+
+/-- `scipy.integrate.odeint` over any `PyOdeScalar` (`Float` to run, `ℚ`/`ℝ` to prove). Declared
+`opaque` (with the RK4 integrator as its `@[implemented_by]` impl) so the KERNEL/COMPILER never
+unfolds or evaluates it: a *closed* program (hardcoded params, no input) that later indexes the
+result — e.g. `solution[-1]` forces the list spine — would otherwise make Lean run the whole
+multi-thousand-step integration at elaboration time and hang. Opaque blocks that while still running
+normally via the impl (a program that reads its params from `input()` is never closed anyway). -/
+@[implemented_by pyScipyOdeintImpl]
+opaque pyScipyOdeint {α} [PyOdeScalar α] (f : List α → α → List α) (y0 : List α) (ts : List α) :
+    List (List α)
 
 end Libraries.scipy

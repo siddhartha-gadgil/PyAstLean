@@ -8,9 +8,12 @@ namespace Libraries.numpy
 #guard_msgs in
 #eval pyNumpyFull (2, 3) 5
 
+-- Runtime (Float) check of the computable grid. `linspace`'s output scalar is now polymorphic
+-- (ℚ to prove, Float to run), and a bare `#eval` has no consuming context to infer it from, so we
+-- say `: List Float` — this test is specifically about the runnable Float behavior.
 /-- info: [0.000000, 2.500000, 5.000000, 7.500000, 10.000000] -/
 #guard_msgs in
-#eval pyNumpyLinspace 0.0 10.0 5
+#eval (pyNumpyLinspace 0.0 10.0 5 : List Float)
 
 /-- info: [[1.000000, 2.000000], [3.000000, 4.000000]] -/
 #guard_msgs in

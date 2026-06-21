@@ -21,7 +21,14 @@ def subscriptTermFromValue (valueJson sliceJson : Json) (valueCode : TSyntax `te
     PygenM (TSyntax `term) := do
     let isTuple := match valueJson.getObjValAs? String "node_type" with
     | .ok "Tuple" => true
-    | _ => false
+    | _ =>
+      -- A `Name` that codegen has marked as a known pair-typed value (e.g. a lambda parameter
+      -- bound to `α × β` and used via `pair[0]`/`pair[1]`) is treated like a tuple literal so a
+      -- constant `0`/`1` index lowers to `Prod.fst`/`Prod.snd` rather than the generic
+      -- `pyGetItem` notation (which has no `PyGetItem` instance for heterogeneous products).
+      match valueJson.getObjValAs? Bool "_pyastlean_pair" with
+      | .ok true => true
+      | _ => false
     let isString := isStringConstant valueJson
 
     let sliceType := sliceJson.getObjValAs? String "node_type"
@@ -51,6 +58,27 @@ def subscriptTermFromValue (valueJson sliceJson : Json) (valueCode : TSyntax `te
           if isString then mkIdent `PyAstLean.pyStringSliceStep
           else mkIdent `PyAstLean.pySlice
         `($sliceIdent $valueCode $startStx $stopStx $stepStx)
+    else if sliceType == .ok "Tuple" then
+        -- numpy-style 2-D indexing on a `List (List _)`: `a[i,j]`, `a[:,j]` (column), `a[i,:]` (row).
+        match sliceJson.getObjValAs? (Array Json) "elts" with
+        | .ok elts =>
+            if elts.size == 2 then
+                let a := elts[0]!
+                let b := elts[1]!
+                let aSlice := a.getObjValAs? String "node_type" == .ok "Slice"
+                let bSlice := b.getObjValAs? String "node_type" == .ok "Slice"
+                if aSlice && !bSlice then
+                    let jCode ← getCode b `term
+                    `(List.map (fun row => row⦋$jCode⦌) $valueCode)
+                else if !aSlice && bSlice then
+                    `($valueCode⦋$(← getCode a `term)⦌)
+                else if !aSlice && !bSlice then
+                    `($valueCode⦋$(← getCode a `term)⦌⦋$(← getCode b `term)⦌)
+                else
+                    pure valueCode
+            else
+                throwError "Only 2-D tuple subscripts are supported."
+        | .error _ => throwError "Tuple subscript is missing its 'elts' field."
     else if isTuple then
         match sliceJson.getObjValAs? String "node_type", sliceJson.getObjValAs? Json "value" with
         | .ok "Constant", .ok (.num (JsonNumber.mk 0 0)) =>

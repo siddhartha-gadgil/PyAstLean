@@ -7,6 +7,58 @@ open Lean Meta Elab Term Qq Std
 namespace PyAstLean
 
 /-!
+## Numeric lowering mode
+
+Controls how a Python `float` is lowered: `exact` → Lean `ℚ` (an exact, *computable* and
+*provable* ordered field — the default, so generated functions can be reasoned about with
+`ring`/`nlinarith`); `approx` → `Float` (IEEE; fast and computable but not a ring, so unprovable).
+The mode is set per backend request (see `py2lean.lean`) into a global ref the codegen reads.
+-/
+
+inductive NumericMode where
+  | exact
+  | approx
+  deriving Repr, BEq, Inhabited
+
+initialize numericModeRef : IO.Ref NumericMode ← IO.mkRef .exact
+
+/-- Read the current numeric lowering mode (set per backend request). -/
+def getNumericMode : IO NumericMode := numericModeRef.get
+
+/-- True when `float` should lower to `ℚ` (the default exact mode). -/
+def numericModeIsExact : IO Bool := return (← getNumericMode) == .exact
+
+/-- Whether the function currently being lowered is "real-valued" — it (transitively) produces an
+`ℝ` transcendental (the Python pass stamps such defs `_real_fn`). While set, exact-mode `float`
+literals/params lower to `ℝ` instead of `ℚ`, so the whole function is uniformly `ℝ` (noncomputable)
+rather than a `ℚ`/`ℝ` mix that won't type-check. Only consulted in exact mode. -/
+initialize realContextRef : IO.Ref Bool ← IO.mkRef false
+
+/-- Read whether we're lowering inside a real-valued (`ℝ`) function body. -/
+def getRealContext : IO Bool := realContextRef.get
+
+/-- When emitting the runnable "twin" of a declaration in `--mode both`, this is the suffix (`'rn`)
+appended to every top-level definition name AND to references to other user-defined functions/classes
+(listed in `userNamesRef`). Empty for the single-version `prove`/`run` modes. Lets one file carry the
+provable `foo` and the runnable `foo'rn` side by side. -/
+initialize runSuffixRef : IO.Ref String ← IO.mkRef ""
+
+/-- The names of the user's top-level functions/classes — references to these get `runSuffix` appended
+in a run-twin so `foo'rn` calls `bar'rn` / builds `CNN'rn`, not the `prove` `bar`/`CNN`. -/
+initialize userNamesRef : IO.Ref (List String) ← IO.mkRef []
+
+/-- The suffix to append to a top-level def name being emitted (empty unless in a run-twin). -/
+def getRunSuffix : IO String := runSuffixRef.get
+
+/-- Append the run-twin suffix to a name unconditionally (for the def being emitted). -/
+def withRunSuffix (name : String) : IO String := return name ++ (← getRunSuffix)
+
+/-- Append the run-twin suffix to a *reference* only when it names a user function/class (so locals
+and library names are untouched). -/
+def suffixIfUserName (name : String) : IO String := do
+  if (← userNamesRef.get).contains name then return name ++ (← getRunSuffix) else return name
+
+/-!
 ## Code generation from JSON data
 
 This module provides a way to generate Lean code from JSON data in an extensible way. The main function is `getCode`, which takes a `pygenerator` a Json object and a syntax category, and returns the corresponding syntax (in the monad `PygenM`) or throws an error.
@@ -64,6 +116,28 @@ def withoutCheck {α : Type} (x : PygenM α) : PygenM α :=
 
 def withUseArrow {α : Type} (x : PygenM α) : PygenM α :=
   withPygenStateField (·.useArrow) (fun st useArrow => { st with useArrow := useArrow }) true x
+
+/-- Run `x` with the real-context flag set to `b` (restoring it afterwards). Used to lower a
+real-marked assignment's RHS so its float literals (and list literals) become `ℝ`. -/
+def withRealContext {α : Type} (b : Bool) (x : PygenM α) : PygenM α := do
+  let saved ← realContextRef.get
+  realContextRef.set b
+  try
+    let r ← x
+    realContextRef.set saved
+    return r
+  catch e =>
+    realContextRef.set saved
+    throw e
+
+/-- Lower `x` in real-context when `json` carries the per-variable `_real` stamp (exact mode) — set
+by the Python pass on every assignment whose root variable holds an `ℝ` value, so the RHS literals
+are born `ℝ` (scalars would coerce, but `List ℚ ↛ List ℝ`, so list literals must be `ℝ` directly). -/
+def withRealIfMarked {α : Type} (json : Lean.Json) (x : PygenM α) : PygenM α := do
+  if (← getNumericMode) == .exact && json.getObjValAs? Bool "_real" == .ok true then
+    withRealContext true x
+  else
+    x
 
 def withFixedVariables {α : Type} (x : PygenM α) : PygenM α := do
   withPygenStateField (·.varNames) (fun st varNames => { st with varNames := varNames }) (← get).varNames x

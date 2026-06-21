@@ -94,4 +94,16 @@ def pythonNumpyMemberMap? (member : String) : Option Lean.Name :=
   | "solve" => some ``pyNumpySolve
   | _ => none
 
+/-- Exact (`ℝ`) versions of the transcendental members, used in the default numeric mode.
+`none` for everything else (those keep their regular `pythonNumpyMemberMap?` mapping). -/
+def pythonNumpyMemberMapReal? (member : String) : Option Lean.Name :=
+  match member with
+  | "exp" => some ``pyNumpyExpR
+  | "log" => some ``pyNumpyLogR
+  | "log10" => some ``pyNumpyLog10R
+  | "log2" => some ``pyNumpyLog2R
+  | "sqrt" => some ``pyNumpySqrtR
+  | "std" => some ``pyNumpyStdR
+  | _ => none
+
 end Libraries.numpy

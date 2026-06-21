@@ -53,7 +53,7 @@ def run_python(payload):
 
 def transpile_to_lean():
     proc = subprocess.run(
-        [sys.executable, str(PY2LEAN), str(MODEL_PY), "--target", "command"],
+        [sys.executable, str(PY2LEAN), str(MODEL_PY), "--target", "command", "--mode", "run"],
         capture_output=True, text=True, cwd=REPO_ROOT)
     if proc.returncode != 0 or not proc.stdout.strip():
         raise RuntimeError(f"Transpilation failed:\n{proc.stderr or proc.stdout}")

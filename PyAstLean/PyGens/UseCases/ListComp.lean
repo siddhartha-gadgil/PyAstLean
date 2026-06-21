@@ -86,7 +86,7 @@ def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
       if rest.isEmpty then
         let eltCode ← getCode eltJson `term
         let mapper ← listCompTargetLambda targetJson eltCode
-        let mapIdent := if jsonUsesMonadicEffect eltJson then mkIdent ``List.mapM else mkIdent ``List.map
+        let mapMethod := if jsonUsesMonadicEffect eltJson then mkIdent `mapM else mkIdent `map
         -- `[f(x) for x in input().split()]`: the iterable is IO. Lower it with an inline `←`
         -- (the codebase's convention for IO values), which binds in the enclosing `do`, so the
         -- map/filter run over the awaited `List` rather than a raw `IO (List _)`.
@@ -94,13 +94,21 @@ def lowerComprehensionClauses (eltJson : Json) (generators : List Json) :
           if jsonUsesIOEffect iterJson then inlineIOTerm iterJson
           else getCode iterJson `term
         let filtered ← comprehensionFilterOver compJson baseIter
-        `($mapIdent $mapper $filtered)
+        -- Emit dot-form `iterable.map (fun x => …)` so the iterable (whose element type is known,
+        -- e.g. `List ℤ`) elaborates first and *binds* the lambda's parameter type. With the
+        -- prefix form `List.map (fun x => …) iterable`, an operator default-instance (e.g. the
+        -- `Rat` default on `*ₚ`) would prematurely pin the unconstrained `x` to `ℚ`, forcing
+        -- `pyIter a` to yield `ℚ` and failing against `List ℤ`.
+        `(($filtered).$mapMethod:ident $mapper)
       else
         let iterCode ← comprehensionIterSyntax compJson
         let nested ← lowerComprehensionClauses eltJson rest
         let binder ← listCompTargetLambda targetJson nested
-        let flatMapIdent := mkIdent ``List.flatMap
-        `($flatMapIdent $binder $iterCode)
+        -- Dot-form `iterable.flatMap (fun x => …)` (not prefix `List.flatMap (fun x => …) iterable`)
+        -- so the iterable's known element type binds the lambda parameter before an operator
+        -- default-instance (e.g. the `Rat` default on `*ₚ`) can pin it — same fix as the `.map`
+        -- path above, needed for multi-clause comprehensions like `[x*y for x in xs for y in ys]`.
+        `(($iterCode).flatMap $binder)
 
 @[pygen "ListComp"]
 def listCompSyntax : (kind : SyntaxNodeKind) → Json →

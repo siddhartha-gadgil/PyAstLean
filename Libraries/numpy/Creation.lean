@@ -56,15 +56,37 @@ def pyNumpyArange (a : Float) (b : Float := pyNumpyNaN) (c : Float := pyNumpyNaN
     else
       panic! "ValueError: arange() received invalid defaults"
 
-/-- Evenly spaced values over a closed interval. -/
-def pyNumpyLinspace (start stop : Float) (num : Int) : List Float :=
+/-- Conversion of a `linspace`/`logspace` bound (`Int`/`Float`/`ℚ`/`ℝ`) into the chosen output
+scalar `γ`. `γ` is determined by the call context (e.g. the `odeint` that consumes the grid, or a
+`Float.pow` in `logspace`), so it's a regular (not `outParam`) class — `Int → ℚ` and `Int → Float`
+both exist. Only the conversions that actually arise are provided (no lossy `Float → ℚ`). -/
+class PyGridConv (α : Type) (γ : Type) where
+  conv : α → γ
+
+instance : PyGridConv Float Float := ⟨id⟩
+instance : PyGridConv Rat Rat := ⟨id⟩
+noncomputable instance : PyGridConv ℝ ℝ := ⟨id⟩
+instance : PyGridConv Int Float := ⟨Float.ofInt⟩
+instance : PyGridConv Int Rat := ⟨fun n => (n : ℚ)⟩
+noncomputable instance : PyGridConv Int ℝ := ⟨fun n => (n : ℝ)⟩
+instance : PyGridConv Nat Float := ⟨Float.ofNat⟩
+instance : PyGridConv Nat Rat := ⟨fun n => (n : ℚ)⟩
+
+open scoped Libraries.numpy.PyOdeScalar in
+/-- Evenly spaced values over a closed interval, over the output scalar `γ` (`Float` to run, `ℚ`/`ℝ`
+to prove — inferred from how the grid is used). `np.linspace(0, 100, n)` (integer bounds) and float
+bounds both work. -/
+def pyNumpyLinspace {α β γ : Type} [PyOdeScalar γ] [PyGridConv α γ] [PyGridConv β γ]
+    (start : α) (stop : β) (num : Int) : List γ :=
+  let s : γ := PyGridConv.conv start
+  let e : γ := PyGridConv.conv stop
   let n := pyNumpyNatFromInt num
   match n with
   | 0 => []
-  | 1 => [start]
+  | 1 => [s]
   | n + 1 =>
-      let step := (stop - start) / Rat.toFloat (n : Rat)
-      (List.range (n + 1)).map (fun i => start + step * Rat.toFloat (i : Rat))
+      let step := (e -ₒ s) /ₒ PyOdeScalar.ofNat (α := γ) n
+      (List.range (n + 1)).map (fun i => s +ₒ step *ₒ PyOdeScalar.ofNat (α := γ) i)
 
 /-- Logarithmically spaced values over a closed interval. -/
 def pyNumpyLogspace (start stop : Float) (num : Int) (base : Float := pyNumpyNaN) : List Float :=

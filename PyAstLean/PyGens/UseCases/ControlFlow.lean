@@ -92,7 +92,7 @@ def breakSyntax : (kind : SyntaxNodeKind) → Json →
 @[pygen "AugAssign"]
 def augAssignSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
-    | `doElem, json => do
+    | `doElem, json => withRealIfMarked json do
         let .ok targetJson := json.getObjValAs? Json "target" | throwError
           s!"AugAssign node does not have a 'target' field or it is not a JSON value: {json}"
         let .ok op := json.getObjValAs? String "op" | throwError
@@ -550,28 +550,38 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         for elem in bodyElems do
           let elemStx ← getCode elem `doElem
           bodyStxArray := appendDoElems bodyStxArray elemStx
-        let mainIdent := mkIdent `main
+        -- Run-twin (`--mode both`): the entry wrapper is emitted as `main'rn` (and its body call to
+        -- `main'` is suffixed to `main''rn` by the Name pygen), leaving the prove `main` as the file's
+        -- single Lean entry point.
+        let mainIdent := mkIdent (← withRunSuffix "main").toName
+        -- A guard that calls into a real-valued (`ℝ`, exact mode) function makes the `main`
+        -- wrapper depend on a `noncomputable` def, so it must itself be `noncomputable` (it
+        -- still elaborates / compile-checks; it just can't be run — use `--approx` to run).
+        let isReal := (← getNumericMode) == .exact && json.getObjValAs? Bool "_real_fn" == .ok true
+        let mkMain : TSyntax `term → PygenM (TSyntax `command) := fun body =>
+          if isReal then `(command| noncomputable def $mainIdent : IO Unit := $body)
+          else `(command| def $mainIdent : IO Unit := $body)
         if bodyNeedsExceptionMonad bodyElems then
           let exceptIdent := mkIdent ``PyAstLean.PyExcept
           let ioUserErrorIdent := mkIdent ``IO.userError
-          `(command| def $mainIdent : IO Unit := do
+          mkMain (← `(do
               let result ← (((do
                   $[$bodyStxArray:doElem]*
                   pure ()
                 ) : $exceptIdent Unit)).run
               match result with
               | .ok _ => pure ()
-              | .error err => throw ($ioUserErrorIdent (toString err)))
+              | .error err => throw ($ioUserErrorIdent (toString err))))
         else if bodyNeedsIOMonad bodyElems then
-          `(command| def $mainIdent : IO Unit := do
+          mkMain (← `(do
               $[$bodyStxArray:doElem]*
-              pure ())
+              pure ()))
         else
           let idRunIdent := mkIdent ``Id.run
-          `(command| def $mainIdent : IO Unit := do
+          mkMain (← `(do
               let _ := $idRunIdent do
                 $[$bodyStxArray:doElem]*
-              pure ())
+              pure ()))
     | _, _ => throwError s!"Unsupported syntax category for If node"
 
 

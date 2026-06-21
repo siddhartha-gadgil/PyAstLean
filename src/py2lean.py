@@ -39,6 +39,15 @@ SUPPORTED_LIBRARY_IMPORTS = get_supported_libraries()
 # library-mapped nor real cross-file Lean modules, so they must be dropped entirely.
 TYPE_ONLY_IMPORTS = {"typing", "typing_extensions", "__future__"}
 
+# Numeric lowering mode sent to the Lean backend: "exact" → Python float becomes Lean ℚ
+# (provable + computable); "approx" → Float (fast, runnable). Set per backend send.
+_NUMERIC_MODE = "exact"
+# Run-twin suffix (`--mode both`): "'rn" while emitting the runnable twin of a declaration, "" for
+# the single-version modes. `_USER_NAMES` lists the user functions/classes whose references the
+# backend suffixes in a twin (so `foo'rn` calls `bar'rn`, builds `CNN'rn`).
+_RUN_SUFFIX = ""
+_USER_NAMES = []
+
 # Submodules of a supported library that act as nested namespaces (e.g. `scipy.special`). Their
 # members all flatten into the top-level library's registry, so importing the submodule (e.g.
 # `from scipy import special`) binds a *module*-kind name that resolves `special.factorial`.
@@ -423,6 +432,287 @@ def annotate_io_effects(module_json):
         annotate_scope(module_json.get("body", []))
 
 
+# Library members whose result is a real (irrational) number — they lower to noncomputable `ℝ`
+# in exact mode (mirrors `pythonLibraryMapReal?` on the Lean side). A function that (transitively)
+# produces one of these can't stay in `ℚ`, so its floats lower to `ℝ` instead.
+REAL_TRANSCENDENTAL_MEMBERS = {
+    "math": {"sqrt", "exp", "log", "sin", "cos", "tan", "pi", "e"},
+    "numpy": {"exp", "log", "log10", "log2", "sqrt", "std"},
+    "scipy": {"pi", "gamma", "gmean", "norm"},
+}
+
+
+def _node_uses_transcendental(node):
+    module = node.get("library_module")
+    member = node.get("library_member")
+    return (
+        isinstance(module, str)
+        and module in REAL_TRANSCENDENTAL_MEMBERS
+        and member in REAL_TRANSCENDENTAL_MEMBERS[module]
+    )
+
+
+def _body_uses_transcendental(body):
+    for stmt in body:
+        for node in _walk_json_nodes(stmt, skip_nested_function_bodies=True):
+            if isinstance(node, dict) and _node_uses_transcendental(node):
+                return True
+    return False
+
+
+def _iter_function_defs(module_json):
+    """Every `FunctionDef` node anywhere in the module (including class methods and nested defs)."""
+    return [
+        node
+        for node in _walk_json_nodes(module_json)
+        if isinstance(node, dict) and node.get("node_type") == "FunctionDef"
+    ]
+
+
+def _func_own_body_nodes(fn):
+    """All IR nodes in `fn`'s OWN body — does not descend into nested function bodies."""
+    for stmt in fn.get("body", []):
+        yield from _walk_json_nodes(stmt, skip_nested_function_bodies=True)
+
+
+def _callee_name(func):
+    """The function/method name a `Call.func` refers to: a plain `Name` id, or an `Attribute`'s
+    `attr` (so `self.sigmoid(x)` / `obj.m(x)` resolve to method `sigmoid`/`m` by name)."""
+    if isinstance(func, dict):
+        if func.get("node_type") == "Name":
+            return func.get("id"), 0
+        if func.get("node_type") == "Attribute":
+            return func.get("attr"), 1  # method: args line up after the implicit `self`
+    return None, 0
+
+
+def _self_field_name(target):
+    """If `target` writes to `self.<field>` (possibly through subscripts, e.g. `self.w[i] = …`),
+    the field name; else `None`. Mutating an element makes the whole field hold the element type."""
+    t = target
+    while isinstance(t, dict) and t.get("node_type") == "Subscript":
+        t = t.get("value")
+    if isinstance(t, dict) and t.get("node_type") == "Attribute":
+        owner = t.get("value")
+        if isinstance(owner, dict) and owner.get("node_type") == "Name" and owner.get("id") == "self":
+            return t.get("attr")
+    return None
+
+
+def _assign_base_name(node):
+    """The root variable name an Assign/AnnAssign/AugAssign writes to, plus the `Name` target node
+    when the target is a plain `Name`. Follows `Subscript`/`Attribute` chains to the root (so
+    `w[0] = …` and `w[0][1] = …` both attribute to `w`), since mutating an element makes the whole
+    container hold the element's type."""
+    target = node.get("target")
+    name_node = target if isinstance(target, dict) and target.get("node_type") == "Name" else None
+    while isinstance(target, dict) and target.get("node_type") in ("Subscript", "Attribute"):
+        target = target.get("value")
+    if isinstance(target, dict) and target.get("node_type") == "Name":
+        return target.get("id"), name_node
+    return None, None
+
+
+def annotate_real_flow(module_json):
+    """Per-VARIABLE real-number dataflow. Marks (in exact mode) exactly the variables/parameters
+    that hold an irrational `ℝ` value, so the Lean backend ascribes `ℝ` only to those slots and
+    leaves everything else `ℚ`/`Int` (which stays computable + provable). Lean's `ℚ ↪ ℝ` scalar
+    coercion bridges a `ℚ` value flowing into an `ℝ` scalar position (call args, `q + sqrt x`).
+
+    Forward monotone fixpoint over a per-`(function, name)` lattice:
+      - a variable assigned an expression that is real → real;
+      - a call argument that is real → the callee's matching parameter is real (arg→param);
+      - a function whose `return` value is real → "returns real", which makes `y = f(…)` real.
+    An expression is real if it contains a transcendental member, references a real var/param, or
+    calls a function that returns real.
+
+    Stamps: `_real` on real parameter (`arg`) nodes and real assignment targets; `_real_fn` on any
+    function/guard that produces or *handles* an `ℝ` (drives `noncomputable`, decoupled from which
+    individual floats are `ℝ`)."""
+    if not (isinstance(module_json, dict) and module_json.get("node_type") == "Module"):
+        return
+
+    functions = {}
+    for fn in _iter_function_defs(module_json):
+        name = fn.get("name")
+        if isinstance(name, str):
+            functions[name] = fn  # last def wins on a (rare) name collision
+
+    param_names = {
+        name: [
+            a.get("arg")
+            for a in fn.get("args", {}).get("args", [])
+            if isinstance(a, dict)
+        ]
+        for name, fn in functions.items()
+    }
+    real_names = {name: set() for name in functions}  # real var/param names, per function
+    returns_real = {name: False for name in functions}
+    real_fields = set()  # instance fields `self.X` that hold an ℝ value (class-global)
+
+    def expr_is_real(expr, scope):
+        for node in _walk_json_nodes(expr, skip_nested_function_bodies=True):
+            if not isinstance(node, dict):
+                continue
+            if _node_uses_transcendental(node):
+                return True
+            node_type = node.get("node_type")
+            if node_type == "Name" and node.get("id") in real_names[scope]:
+                return True
+            if node_type == "Attribute":
+                owner = node.get("value")
+                if (
+                    isinstance(owner, dict)
+                    and owner.get("node_type") == "Name"
+                    and owner.get("id") == "self"
+                    and node.get("attr") in real_fields
+                ):
+                    return True
+            if node_type == "Call":
+                callee, _ = _callee_name(node.get("func"))
+                if returns_real.get(callee, False):
+                    return True
+        return False
+
+    changed = True
+    while changed:
+        changed = False
+        for name, fn in functions.items():
+            for node in _func_own_body_nodes(fn):
+                node_type = node.get("node_type")
+                if node_type in ("Assign", "AnnAssign", "AugAssign"):
+                    base_name, _ = _assign_base_name(node)
+                    value = node.get("value")
+                    if (
+                        base_name
+                        and value is not None
+                        and base_name not in real_names[name]
+                        and expr_is_real(value, name)
+                    ):
+                        real_names[name].add(base_name)
+                        changed = True
+                    field = _self_field_name(node.get("target"))
+                    if (
+                        field
+                        and field not in real_fields
+                        and value is not None
+                        and expr_is_real(value, name)
+                    ):
+                        real_fields.add(field)
+                        changed = True
+                elif node_type == "Call":
+                    callee, self_offset = _callee_name(node.get("func"))
+                    if callee in functions:
+                        for i, arg in enumerate(node.get("args", [])):
+                            pi = i + self_offset  # skip the implicit `self` for method calls
+                            if pi >= len(param_names[callee]):
+                                break
+                            pname = param_names[callee][pi]
+                            if (
+                                pname
+                                and pname not in real_names[callee]
+                                and expr_is_real(arg, name)
+                            ):
+                                real_names[callee].add(pname)
+                                changed = True
+                    # A list-mutating method `xs.append(v)` / `.extend(v)` / `.insert(i, v)` makes
+                    # the receiver hold `v`'s type — so a list built by appending real values is real.
+                    func = node.get("func")
+                    if (
+                        isinstance(func, dict)
+                        and func.get("node_type") == "Attribute"
+                        and func.get("attr") in ("append", "extend", "insert")
+                    ):
+                        args = node.get("args", [])
+                        if args and expr_is_real(args[-1], name):
+                            recv = func.get("value")
+                            if isinstance(recv, dict) and recv.get("node_type") == "Name":
+                                rn = recv.get("id")
+                                if rn and rn not in real_names[name]:
+                                    real_names[name].add(rn)
+                                    changed = True
+                            else:
+                                fld = _self_field_name(recv)
+                                if fld and fld not in real_fields:
+                                    real_fields.add(fld)
+                                    changed = True
+                elif node_type == "Return":
+                    value = node.get("value")
+                    if (
+                        value is not None
+                        and not returns_real[name]
+                        and expr_is_real(value, name)
+                    ):
+                        returns_real[name] = True
+                        changed = True
+
+    # Stamp the IR with the converged marks.
+    for name, fn in functions.items():
+        reals = real_names[name]
+        for a in fn.get("args", {}).get("args", []):
+            if isinstance(a, dict) and a.get("arg") in reals:
+                a["_real"] = True
+        for node in _func_own_body_nodes(fn):
+            node_type = node.get("node_type")
+            if node_type in ("Assign", "AnnAssign", "AugAssign"):
+                base_name, target_node = _assign_base_name(node)
+                # Stamp EVERY assignment whose root var is real (even a `x = 0.0` whose own RHS
+                # isn't real but `x` is real elsewhere), so the RHS is lowered in real-context
+                # (literals → `ℝ`, list literals → `List ℝ`); the mutable then infers `ℝ`.
+                if base_name in reals or _self_field_name(node.get("target")) in real_fields:
+                    node["_real"] = True
+                    if target_node is not None:
+                        target_node["_real"] = True
+            elif node_type == "Return" and returns_real[name]:
+                # The function's return type is `ℝ`; lower every `return` value in real-context so a
+                # literal-only branch (e.g. `return -1.0, []`) matches an `ℝ`-valued branch.
+                node["_real"] = True
+
+    # `_real_fn` (→ `noncomputable`) — a function is noncomputable if it produces or *handles* an ℝ
+    # value, OR calls a `_real_fn` function (cascade through void calls too, e.g. `main` → `train`).
+    real_fn = {
+        name
+        for name, fn in functions.items()
+        if real_names[name]
+        or returns_real[name]
+        or any(expr_is_real(stmt, name) for stmt in fn.get("body", []))
+    }
+    changed = True
+    while changed:
+        changed = False
+        for name, fn in functions.items():
+            if name in real_fn:
+                continue
+            for node in _func_own_body_nodes(fn):
+                if node.get("node_type") == "Call":
+                    callee, _ = _callee_name(node.get("func"))
+                    if callee in real_fn:
+                        real_fn.add(name)
+                        changed = True
+                        break
+    for name in real_fn:
+        functions[name]["_real_fn"] = True
+
+    # Stamp `_real` on the structure-field declarations of real instance fields (so the Lean
+    # `structure` types them `ℝ`), matching the real-context values written into them.
+    for node in _walk_json_nodes(module_json):
+        if isinstance(node, dict) and node.get("node_type") == "ClassDef":
+            for fld in node.get("fields", []):
+                if isinstance(fld, dict) and fld.get("name") in real_fields:
+                    fld["_real"] = True
+
+    # The `__main__` guard becomes Lean's `def main`; if it calls a noncomputable (`_real_fn`)
+    # function, that wrapper must be `noncomputable` too.
+    real_fn_names = {name for name, fn in functions.items() if fn.get("_real_fn")}
+    for stmt in module_json.get("body", []):
+        if isinstance(stmt, dict) and stmt.get("node_type") == "If":
+            guard_body = stmt.get("body", [])
+            if _body_uses_transcendental(guard_body) or _body_calls_known_functions(
+                guard_body, real_fn_names
+            ):
+                stmt["_real_fn"] = True
+
+
 def _imported_alias_name(alias_node):
     asname = alias_node.get("asname")
     if isinstance(asname, str) and asname:
@@ -528,7 +818,7 @@ def _annotate_library_imports_in_scope(body, inherited_env=None):
             module_name = stmt.get("module")
             root = _supported_library_root(module_name)
             if root is not None:
-                is_submodule_path = "." in module_name
+                is_submodule_path = isinstance(module_name, str) and "." in module_name
                 for alias_node in stmt.get("names", []):
                     if not isinstance(alias_node, dict):
                         continue
@@ -654,6 +944,7 @@ def translate_to_json(source_code, filepath=None, best_effort=False):
     annotate_library_imports(data)
     annotate_exception_effects(data)
     annotate_io_effects(data)
+    annotate_real_flow(data)
     annotate_main_entrypoint(data)
     annotate_toplevel_state(data)
     annotate_if_assigned_names(data)
@@ -746,7 +1037,9 @@ class LeanBackendClient:
     def _one_shot_request(self, ast_json, target, check=True):
         """Fallback backend path that avoids the persistent server when it misbehaves."""
         json_task = json.dumps(
-            {"task": "translate", "ast": ast_json, "target": target, "check": check},
+            {"task": "translate", "ast": ast_json, "target": target, "check": check,
+             "numericMode": _NUMERIC_MODE, "runSuffix": _RUN_SUFFIX,
+             "userNames": _USER_NAMES},
             separators=(",", ":"),
         )
         cmd = ["lake", "exe", "py2lean", json_task, target]
@@ -818,7 +1111,9 @@ class LeanBackendClient:
         assert self.proc.stdin is not None
         assert self.proc.stdout is not None
         json_task = json.dumps(
-            {"task": "translate", "ast": ast_json, "target": target, "check": check},
+            {"task": "translate", "ast": ast_json, "target": target, "check": check,
+             "numericMode": _NUMERIC_MODE, "runSuffix": _RUN_SUFFIX,
+             "userNames": _USER_NAMES},
             separators=(",", ":"),
         )
         logger.debug("Sending request to Lean backend: target=%s check=%s", target, check)
@@ -1096,12 +1391,52 @@ def _backend_placeholder_command(stmt, idx):
     for, so it slips past the node-level fallback). Keeps the declaration's name where possible so
     references still resolve; the linter flags the `pyUnsupported` use."""
     node_type = stmt.get("node_type", "statement") if isinstance(stmt, dict) else "statement"
-    ident = _lean_ident(stmt.get("name") if isinstance(stmt, dict) else None) or f"__py_unsup_backend_{idx}"
-    return f'def {ident} := pyUnsupported "unsupported {node_type} (backend could not translate)"'
+    name = stmt.get("name") if isinstance(stmt, dict) else None
+    msg = f"unsupported {node_type} (backend could not translate)"
+    # The main entry-point body (`main'`) is awaited by the `main` wrapper, so it must stay a
+    # runnable `IO Unit` — a `pyUnsupported` *value* there would dangle the wrapper's reference.
+    if name in ("main", "main'"):
+        return f'def {name} : IO Unit := do\n  let _ := pyUnsupported "{msg}"\n  pure ()'
+    ident = _lean_ident(name) or f"__py_unsup_backend_{idx}"
+    return f'def {ident} := pyUnsupported "{msg}"'
 
 
-def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False):
-    """Translate Python source to Lean via JSON IR and the Lean backend executable."""
+def _collect_user_names(body):
+    """The user's module-scope function/class names — references to these get the `'rn` suffix in a
+    run-twin (so `foo'rn` calls `bar'rn`, builds `CNN'rn`). NESTED functions (`def` inside `def`) are
+    emitted as local `let` bindings regenerated in each twin, so their names must NOT be suffixed."""
+    names = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            nt = node.get("node_type")
+            if nt in ("FunctionDef", "ClassDef"):
+                n = node.get("name")
+                if isinstance(n, str):
+                    names.add(n)
+                return  # a def/class boundary: its own body is a separate scope (nested = local)
+            if nt in ("AsyncFunctionDef", "Lambda"):
+                return
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for it in node:
+                walk(it)
+
+    for stmt in body:
+        walk(stmt)
+    return sorted(names)
+
+
+def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, mode="both"):
+    """Translate Python source to Lean via JSON IR and the Lean backend executable.
+
+    `mode` selects the numeric semantics: "prove" (exact ℚ/ℝ, provable), "run" (Float, runnable), or
+    "both" (default) — emit the provable version AND a runnable twin whose top-level defs/classes and
+    the entry point are suffixed `'rn`, adjacently."""
+    global _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES
+    _NUMERIC_MODE = "approx" if mode == "run" else "exact"
+    _RUN_SUFFIX, _USER_NAMES = "", []
     json_ir = translate_to_json(source_code, filepath, best_effort=best_effort)
     ast_json = json.loads(json_ir)
     _stamp_class_dispatch(ast_json)
@@ -1109,6 +1444,33 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
 
     if ast_json.get("node_type") == "Module":
         body = ast_json.get("body", [])
+        user_names = _collect_user_names(body)
+        code_key = f"lean_{target}"
+        single = "approx" if mode == "run" else "exact"
+
+        def node_passes(node):
+            """Emission passes for one top-level node: (numericMode, runSuffix, userNames). In `both`
+            mode only definitions/classes and the `__main__` guard get a runnable `'rn` twin (their
+            names are suffixed); top-level constants/`del`/statements emit once (an unsuffixed twin
+            would just redeclare the same global)."""
+            nt = node.get("node_type")
+            twinnable = nt in ("FunctionDef", "ClassDef", "Module") or (nt == "If" and node.get("is_main_guard"))
+            if mode == "both" and twinnable:
+                return [("exact", "", []), ("approx", "'rn", user_names)]
+            return [(single, "", [])]
+
+        def send_node(node):
+            """Send `node` once per pass; return the list of code strings, or None on failure."""
+            global _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES
+            codes = []
+            for nmode, suffix, unames in node_passes(node):
+                _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES = nmode, suffix, unames
+                r = invoke_lean_backend(node, target, check=False, client=client)
+                if r.get("result") is False or code_key not in r:
+                    return None
+                codes.append(r[code_key])
+            return codes
+
         if target == "command":
             # Each part is (is_comment, text). Standalone comments attach to the next
             # part with a single newline so they read as leading comments, while real
@@ -1124,7 +1486,6 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                 if stmt.get("node_type") in {"Comment", "DocString"}:
                     code_parts.append((True, _direct_comment_code(stmt)))
                     continue
-                code_key = f"lean_{target}"
                 # Mutually-recursive functions can't be separate `def`s — send the whole group as a
                 # single `Module` so the backend emits one `mutual … end` block.
                 if stmt.get("node_type") == "FunctionDef":
@@ -1139,31 +1500,31 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                             and s.get("name") in group
                         ]
                         module_node = {"node_type": "Module", "body": members}
-                        result = invoke_lean_backend(module_node, target, check=False, client=client)
-                        if result.get("result") is False:
+                        codes = send_node(module_node)
+                        if codes is None:
                             if best_effort:
                                 logger.warning("best-effort: backend could not translate %s; replaced with pyUnsupported placeholder", name)
                                 code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
                                 backend_unsup += 1
                                 emitted_funcs.update(group)
                                 continue
-                            return result
-                        if code_key not in result:
-                            return {"result": False, "error": f"Missing '{code_key}' in backend response."}
-                        code_parts.append((False, result[code_key]))
+                            return {"result": False, "error": f"backend could not translate {name}"}
+                        for c in codes:
+                            code_parts.append((False, c))
                         emitted_funcs.update(group)
                         continue
-                result = invoke_lean_backend(stmt, target, check=False, client=client)
-                if result.get("result") is False:
+                codes = send_node(stmt)
+                if codes is None:
                     if best_effort:
                         logger.warning("best-effort: backend could not translate a %s; replaced with pyUnsupported placeholder", stmt.get("node_type"))
                         code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
                         backend_unsup += 1
                         continue
-                    return result
-                if code_key not in result:
-                    return {"result": False, "error": f"Missing '{code_key}' in backend response."}
-                code_parts.append((False, _inject_comments_into_lean(stmt, result[code_key])))
+                    return {"result": False, "error": f"backend could not translate {stmt.get('node_type')}"}
+                # Inline comment placeholders live inside each emitted version, so inject into the
+                # prove version AND every `'rn` twin.
+                for c in codes:
+                    code_parts.append((False, _inject_comments_into_lean(stmt, c)))
 
             body_code = _join_command_parts(code_parts)
             if imports_add:
@@ -1177,6 +1538,8 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "",
                     "open PyAstLean",
                     "open Libraries",
+                    "\n",
+                    "set_option linter.all false" # shut up warnings which annoyingly popup in output
                     "\n",
                 ]
                 full_code = "\n".join(preamble_lines) + body_code
@@ -1237,6 +1600,16 @@ def main(argv=None):
              "unsupported constructs (foreign libraries, unhandled syntax) instead of emitting "
              "pyUnsupported(...) placeholders.",
     )
+    parser.add_argument(
+        "--mode",
+        dest="mode",
+        choices=["prove", "run", "both"],
+        default="both",
+        help="Which numeric semantics to emit. 'prove': exact ℚ/ℝ (provable; transcendentals "
+             "noncomputable). 'run': Float (fast, runnable). 'both' (default): emit BOTH in one file "
+             "— the provable version under its name and a runnable twin suffixed 'rn "
+             "(e.g. `main'rn`, `sigmoid'rn`).",
+    )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -1245,7 +1618,8 @@ def main(argv=None):
         parser.error("the following arguments are required: file")
 
     source_code = Path(file_path).read_text(encoding="utf-8")
-    result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict)
+    result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
+                               mode=args.mode)
 
     if isinstance(result, dict):
         if result.get("result") is False:

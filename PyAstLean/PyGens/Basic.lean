@@ -56,16 +56,28 @@ decimal literal would otherwise resolve to `Rat` via the default instances. -/
 def floatNumToStx (mantissa : Int) (exponent : Nat) (scientific : Bool) :
     MetaM <| TSyntax `term := do
   let magnitude := Int.natAbs mantissa
+  -- Default `exact` mode lowers a Python float to an exact `ℚ` (provable + computable); `approx`
+  -- mode keeps `Float` (today's behavior).
+  let mode ← getNumericMode
+  -- Inside a real-valued function (exact mode), a float literal is `ℝ` so it composes with the
+  -- transcendental results in that function; otherwise exact mode uses `ℚ`.
+  let exactTy : Name := if (← getRealContext) then ``Real else ``Rat
   let base ←
     if scientific then
-      let floatScientificIdent := mkIdent ``Float.ofScientific
       let magnitudeStx := Syntax.mkNumLit (toString magnitude)
       let exponentStx := Syntax.mkNumLit (toString exponent)
-      `($floatScientificIdent $magnitudeStx true $exponentStx)
+      match mode with
+      | .approx =>
+        let floatScientificIdent := mkIdent ``Float.ofScientific
+        `($floatScientificIdent $magnitudeStx true $exponentStx)
+      | .exact =>
+        let ofSciIdent := mkIdent ``OfScientific.ofScientific
+        let exactIdent := mkIdent exactTy
+        `(($ofSciIdent $magnitudeStx true $exponentStx : $exactIdent))
     else
-      let floatIdent := mkIdent ``Float
       let sciLit := Syntax.mkScientificLit (floatDecimalString magnitude exponent)
-      `(($sciLit : $floatIdent))
+      let tyIdent := match mode with | .approx => mkIdent ``Float | .exact => mkIdent exactTy
+      `(($sciLit : $tyIdent))
   if mantissa < 0 then
     `(- $base:term)
   else
@@ -101,10 +113,26 @@ def constantSyntax : (kind : SyntaxNodeKind) → Json →
 def jsonLibraryMappedName? (json : Json) : PygenM (Option Lean.Name) := do
   match json.getObjValAs? String "library_module", json.getObjValAs? String "library_member" with
   | .ok moduleName, .ok memberName =>
-      match Libraries.pythonLibraryMap? moduleName memberName with
+      -- In exact mode prefer the `ℝ`/`noncomputable` variant for transcendentals so generated
+      -- code is provable; everything else (and all of `--approx`) uses the regular mapping.
+      -- Exact mode: a transcendental → `ℝ` (real map); else a computable-but-non-Float override
+      -- like `math.pow`→rational (exact map); else the regular (often `Float`) mapping.
+      let realName? ← if (← getNumericMode) == .exact
+        then pure (Libraries.pythonLibraryMapReal? moduleName memberName
+                    <|> Libraries.pythonLibraryMapExact? moduleName memberName)
+        else pure none
+      match realName? <|> Libraries.pythonLibraryMap? moduleName memberName with
       | some leanName => pure (some leanName)
       | none => throwError s!"Unsupported imported library member '{moduleName}.{memberName}'."
   | _, _ => pure none
+
+/-- Resolve a Python builtin name to its Lean runtime name, honouring the numeric mode: in exact
+mode the `pythonBuiltinMapExact?` overrides (e.g. `float` → `pyRat`) win over the regular table. -/
+def builtinMappedName? (name : String) : PygenM (Option Lean.Name) := do
+  if (← getNumericMode) == .exact then
+    return pythonBuiltinMapExact? name <|> pythonBuiltinMap? name
+  else
+    return pythonBuiltinMap? name
 
 @[pygen "Name"]
 def nameSyntax : (kind : SyntaxNodeKind) → Json →
@@ -115,14 +143,18 @@ def nameSyntax : (kind : SyntaxNodeKind) → Json →
     | none =>
         let .ok id := json.getObjValAs? String "id" | throwError
           s!"Name node does not have an 'id' field or it is not a string: {json}"
-        return mkIdent id.toName
+        -- In a run-twin, a reference to a user function/class is suffixed (`bar` → `bar'rn`,
+        -- `CNN` → `CNN'rn`); locals and library names are left as-is.
+        return mkIdent (← suffixIfUserName id).toName
   | `ident, json => do
     match ← jsonLibraryMappedName? json with
     | some leanName => pure (mkIdent leanName)
     | none =>
         let .ok id := json.getObjValAs? String "id" | throwError
           s!"Name node does not have an 'id' field or it is not a string: {json}"
-        return mkIdent id.toName
+        -- In a run-twin, a reference to a user function/class is suffixed (`bar` → `bar'rn`,
+        -- `CNN` → `CNN'rn`); locals and library names are left as-is.
+        return mkIdent (← suffixIfUserName id).toName
   | _, _ => throwError s!"Unsupported syntax category for Name node"
 
 @[pygen "List"]

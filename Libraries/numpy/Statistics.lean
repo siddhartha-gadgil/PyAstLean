@@ -163,6 +163,40 @@ def pyNumpyLog2 {α} [PyNumpyScalar α] (xs : List α) : List Float :=
 def pyNumpySqrt {α} [PyNumpyScalar α] (xs : List α) : List Float :=
   (pyNumpyToFloats xs).map Float.sqrt
 
+/-! ## Exact (`ℝ`) transcendental maps (default mode)
+
+`noncomputable` `ℝ` counterparts of the elementwise transcendental maps and `std`, backed by
+`Real.*`. Selected over the `Float` versions in exact mode; theorems about them are true. -/
+
+/-- Map numpy scalars to `ℝ` (exact-mode analogue of `pyNumpyToFloats`). -/
+noncomputable def pyNumpyToReals {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  xs.map PyNumpyRealScalar.toReal
+
+noncomputable def pyNumpyExpR {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  (pyNumpyToReals xs).map Real.exp
+
+noncomputable def pyNumpyLogR {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  (pyNumpyToReals xs).map Real.log
+
+noncomputable def pyNumpyLog10R {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  (pyNumpyToReals xs).map (fun x => Real.log x / Real.log 10)
+
+noncomputable def pyNumpyLog2R {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  (pyNumpyToReals xs).map (fun x => Real.log x / Real.log 2)
+
+noncomputable def pyNumpySqrtR {α} [PyNumpyRealScalar α] (xs : List α) : List ℝ :=
+  (pyNumpyToReals xs).map Real.sqrt
+
+/-- Population standard deviation over `ℝ` (`std`): `√(mean((xᵢ - mean)²))`. -/
+noncomputable def pyNumpyStdR {α} [PyNumpyRealScalar α] (xs : List α) : ℝ :=
+  let ys := pyNumpyToReals xs
+  if ys.isEmpty then 0
+  else
+    let n : ℝ := (ys.length : ℝ)
+    let mean := ys.foldl (· + ·) 0 / n
+    let var := (ys.map (fun x => (x - mean) ^ 2)).foldl (· + ·) 0 / n
+    Real.sqrt var
+
 /-- Logical `any` over a list. -/
 def pyNumpyAny {α} [PyNumpyScalar α] (xs : List α) : Bool :=
   xs.any (fun x => toFloat x != 0.0)

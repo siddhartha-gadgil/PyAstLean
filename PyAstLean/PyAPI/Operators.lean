@@ -15,6 +15,15 @@ instance {α β γ} [HAdd α β γ] : PyHAdd α β γ where
 instance (priority := high) : PyHAdd Rat Rat Rat where
   hAdd := fun a b => (a : Rat) + (b : Rat)
 
+-- Keep `Int + Int = Int` (Python semantics) even when the operands are still metavariables at
+-- elaboration (e.g. `[x + y for x in xs for y in ys]` over `List Int`). Without this, the
+-- `Rat` defaulting above coerces both operands to `ℚ`, which then forces the iterable's element
+-- type to `ℚ` and fails (the rat-default-instance hazard). A higher *defaulting* priority on the
+-- concrete `Int` instance wins the tie. Mirrors the existing `Int`-preserving behavior of `-ₚ`.
+@[default_instance 10001]
+instance (priority := high) : PyHAdd Int Int Int where
+  hAdd := fun a b => a + b
+
 instance : PyHAdd String String String where
   hAdd := String.append
 
@@ -56,6 +65,11 @@ instance (priority := high) : PyHSub Nat Nat Int where
 -- `ok := Rat`, which then forced integer-only follow-ups like `pyFloorDiv (ok +ₚ ng)` to fail.
 instance (priority := high) : PyHSub Rat Int Rat where
   hSub := fun a b => (a : Rat) - (b : Int)
+
+-- Symmetric `Int - Rat` (e.g. `1 - g/k` in a logistic term where `g/k : ℚ`). Plain instance, NOT
+-- `@[default_instance]` (same rat-default-instance hazard note as above).
+instance (priority := high) : PyHSub Int Rat Rat where
+  hSub := fun a b => (a : Rat) - b
 
 class PyHMul (α β : Type) (γ : outParam Type) where
   hMul : α → β → γ
@@ -103,6 +117,18 @@ instance {α : Type} : PyHMul Int (List α) (List α) where
 @[default_instance]
 instance (priority := high) : PyHMul Rat Rat Rat where
   hMul := fun a b => (a : Rat) * (b : Rat)
+
+-- Mixed `Rat * Int` / `Rat * Nat` (and symmetric). Plain instances, NOT `@[default_instance]`:
+-- a default here would pin an unconstrained operand to `Rat` (the rat-default-instance hazard).
+instance (priority := high) : PyHMul Rat Int Rat where hMul := fun a b => a * (b : Rat)
+instance (priority := high) : PyHMul Int Rat Rat where hMul := fun a b => (a : Rat) * b
+instance (priority := high) : PyHMul Rat Nat Rat where hMul := fun a b => a * (b : Rat)
+instance (priority := high) : PyHMul Nat Rat Rat where hMul := fun a b => (a : Rat) * b
+
+-- Keep `Int * Int = Int` (Python semantics) even with still-metavariable operands — see the
+-- `PyHAdd Int Int Int` note above (the rat-default-instance hazard, here for `*ₚ`).
+@[default_instance 10001]
+instance (priority := high) : PyHMul Int Int Int where hMul := fun a b => a * b
 
 class PyHPow (α β : Type) (γ : outParam Type) where
   hPow : α → β → γ
@@ -177,6 +203,13 @@ instance {α β γ} [HDiv α β γ] : PyHDiv α β γ where
 instance (priority := high) : PyHDiv Int Int Rat where
   hDiv := fun a b => (a : Rat) / (b : Rat)
 
+-- Mixed `Rat / Int` / `Rat / Nat` (and symmetric). The common case is `total / len(xs)` where
+-- `total : Rat` and `len(xs) : Int`. Plain instances (no `@[default_instance]`) — see the mul note.
+instance (priority := high) : PyHDiv Rat Int Rat where hDiv := fun a b => a / (b : Rat)
+instance (priority := high) : PyHDiv Int Rat Rat where hDiv := fun a b => (a : Rat) / b
+instance (priority := high) : PyHDiv Rat Nat Rat where hDiv := fun a b => a / (b : Rat)
+instance (priority := high) : PyHDiv Nat Rat Rat where hDiv := fun a b => (a : Rat) / b
+
 instance (priority := high) : PyHDiv Nat Nat Rat where
   hDiv := fun a b => (a : Rat) / (b : Rat)
 
@@ -197,6 +230,113 @@ instance (priority := high) : PyHDiv Float Nat Float where
 
 instance (priority := high) : PyHDiv Nat Float Float where
   hDiv := fun a b => Rat.toFloat (a : Rat) / b
+
+/-! Mixed `Float`/`Int` and `Float`/`Nat` `+`/`-`/`*` (Python promotes the integer to float).
+Lean has no heterogeneous `HAdd Float Int` etc., so these are needed whenever an integer literal
+or a `len()`/`int()` result meets a float — e.g. `1 - g / k`, `grass[i] + 1`, `2 * x`. -/
+instance (priority := high) : PyHAdd Float Int Float where hAdd a b := a + Rat.toFloat (b : Rat)
+instance (priority := high) : PyHAdd Int Float Float where hAdd a b := Rat.toFloat (a : Rat) + b
+instance (priority := high) : PyHAdd Float Nat Float where hAdd a b := a + Rat.toFloat (b : Rat)
+instance (priority := high) : PyHAdd Nat Float Float where hAdd a b := Rat.toFloat (a : Rat) + b
+
+instance (priority := high) : PyHSub Float Int Float where hSub a b := a - Rat.toFloat (b : Rat)
+instance (priority := high) : PyHSub Int Float Float where hSub a b := Rat.toFloat (a : Rat) - b
+instance (priority := high) : PyHSub Float Nat Float where hSub a b := a - Rat.toFloat (b : Rat)
+instance (priority := high) : PyHSub Nat Float Float where hSub a b := Rat.toFloat (a : Rat) - b
+
+instance (priority := high) : PyHMul Float Int Float where hMul a b := a * Rat.toFloat (b : Rat)
+instance (priority := high) : PyHMul Int Float Float where hMul a b := Rat.toFloat (a : Rat) * b
+instance (priority := high) : PyHMul Float Nat Float where hMul a b := a * Rat.toFloat (b : Rat)
+instance (priority := high) : PyHMul Nat Float Float where hMul a b := Rat.toFloat (a : Rat) * b
+
+/-! ## Mixed `ℚ`/`ℝ` (and `ℤ`/`ℕ` with `ℝ`) arithmetic — exact mode
+
+In exact mode a transcendental yields `ℝ` while the surrounding rational/integer values are `ℚ`/`ℤ`,
+e.g. `g *ₚ math.log (g +ₚ 1)` with `g : ℚ`. Lean has no heterogeneous `HMul ℚ ℝ`, so these promote
+the rational/integer operand into `ℝ` and produce `ℝ`. (`ℝ×ℝ` already works via the generic
+`[HMul α β γ]` instance.) `noncomputable`, since the `ℚ ↪ ℝ` / `ℤ ↪ ℝ` casts are. -/
+noncomputable instance (priority := high) : PyHMul Real Real Real where hMul a b := (a : ℝ) * b
+noncomputable instance (priority := high) : PyHMul Rat Real Real where hMul a b := (a : ℝ) * b
+noncomputable instance (priority := high) : PyHMul Real Rat Real where hMul a b := a * (b : ℝ)
+noncomputable instance (priority := high) : PyHMul Int Real Real where hMul a b := (a : ℝ) * b
+noncomputable instance (priority := high) : PyHMul Real Int Real where hMul a b := a * (b : ℝ)
+noncomputable instance (priority := high) : PyHMul Nat Real Real where hMul a b := (a : ℝ) * b
+noncomputable instance (priority := high) : PyHMul Real Nat Real where hMul a b := a * (b : ℝ)
+
+noncomputable instance (priority := high) : PyHAdd Real Real Real where hAdd a b := (a : ℝ) + b
+noncomputable instance (priority := high) : PyHAdd Rat Real Real where hAdd a b := (a : ℝ) + b
+noncomputable instance (priority := high) : PyHAdd Real Rat Real where hAdd a b := a + (b : ℝ)
+noncomputable instance (priority := high) : PyHAdd Int Real Real where hAdd a b := (a : ℝ) + b
+noncomputable instance (priority := high) : PyHAdd Real Int Real where hAdd a b := a + (b : ℝ)
+noncomputable instance (priority := high) : PyHAdd Nat Real Real where hAdd a b := (a : ℝ) + b
+noncomputable instance (priority := high) : PyHAdd Real Nat Real where hAdd a b := a + (b : ℝ)
+
+noncomputable instance (priority := high) : PyHSub Real Real Real where hSub a b := (a : ℝ) - b
+noncomputable instance (priority := high) : PyHSub Rat Real Real where hSub a b := (a : ℝ) - b
+noncomputable instance (priority := high) : PyHSub Real Rat Real where hSub a b := a - (b : ℝ)
+noncomputable instance (priority := high) : PyHSub Int Real Real where hSub a b := (a : ℝ) - b
+noncomputable instance (priority := high) : PyHSub Real Int Real where hSub a b := a - (b : ℝ)
+noncomputable instance (priority := high) : PyHSub Nat Real Real where hSub a b := (a : ℝ) - b
+noncomputable instance (priority := high) : PyHSub Real Nat Real where hSub a b := a - (b : ℝ)
+
+noncomputable instance (priority := high) : PyHDiv Real Real Real where hDiv a b := (a : ℝ) / b
+noncomputable instance (priority := high) : PyHDiv Rat Real Real where hDiv a b := (a : ℝ) / b
+noncomputable instance (priority := high) : PyHDiv Real Rat Real where hDiv a b := a / (b : ℝ)
+noncomputable instance (priority := high) : PyHDiv Int Real Real where hDiv a b := (a : ℝ) / b
+noncomputable instance (priority := high) : PyHDiv Real Int Real where hDiv a b := a / (b : ℝ)
+noncomputable instance (priority := high) : PyHDiv Nat Real Real where hDiv a b := (a : ℝ) / b
+noncomputable instance (priority := high) : PyHDiv Real Nat Real where hDiv a b := a / (b : ℝ)
+
+
+/-! ## Auto-derived mixed numeric arithmetic — `PyNumJoin`
+
+Rather than writing every mixed pair out four times (once per `+ - * /`), `PyNumJoin α β γ` names the
+common result type `γ` of mixing `α` and `β` **once**, together with the two coercions into it. A
+*single* generic instance per operator then derives all four. Adding a new numeric type later means
+adding its coercion pairs here once — not `4 ×` new operator instances.
+
+These are LOW priority and NOT `@[default_instance]`: the carefully-tuned homogeneous defaults above
+(`Rat`/`Int` `@[default_instance]`, the `@[simp] rfl` lemmas) still win for same-type and
+unconstrained-operand resolution; `PyNumJoin` only fires for a genuinely-mixed *concrete* pair that
+no higher-priority instance already covers (e.g. `ℚ × Float`, which arises when a run-twin function
+multiplies a shared `ℚ` constant by a `Float` local). The `ℝ` mixes stay explicit (`noncomputable`)
+just above; this covers the computable tower `ℕ ⊂ ℤ ⊂ ℚ` and `Float`. -/
+class PyNumJoin (α β : Type) (γ : outParam Type) where
+  coeL : α → γ
+  coeR : β → γ
+
+namespace PyNumJoin
+/-- `α` mixed with itself does not need a join (the homogeneous `[HAdd α α α]` instance handles it);
+`mk2 f g` builds the two-coercion record for a genuinely mixed pair. -/
+abbrev mk2 {α β γ} (f : α → γ) (g : β → γ) : PyNumJoin α β γ := ⟨f, g⟩
+end PyNumJoin
+
+-- ℕ ⊂ ℤ
+instance : PyNumJoin Nat Int Int := .mk2 (Int.ofNat) id
+instance : PyNumJoin Int Nat Int := .mk2 id (Int.ofNat)
+-- · ⊂ ℚ
+instance : PyNumJoin Nat Rat Rat := .mk2 (fun n => (n : ℚ)) id
+instance : PyNumJoin Rat Nat Rat := .mk2 id (fun n => (n : ℚ))
+instance : PyNumJoin Int Rat Rat := .mk2 (fun n => (n : ℚ)) id
+instance : PyNumJoin Rat Int Rat := .mk2 id (fun n => (n : ℚ))
+-- · ⊂ Float  (ℚ → Float is `Rat.toFloat`; this is the pair the prove/run twin split needs)
+instance : PyNumJoin Nat Float Float := .mk2 (fun n => Float.ofNat n) id
+instance : PyNumJoin Float Nat Float := .mk2 id (fun n => Float.ofNat n)
+instance : PyNumJoin Int Float Float := .mk2 (fun n => Float.ofInt n) id
+instance : PyNumJoin Float Int Float := .mk2 id (fun n => Float.ofInt n)
+instance : PyNumJoin Rat Float Float := .mk2 Rat.toFloat id
+instance : PyNumJoin Float Rat Float := .mk2 id Rat.toFloat
+
+-- One generic instance per operator derives `+ - * /` for every `PyNumJoin` pair. Project through
+-- the named `j` (its `β` is fixed) — a bare `PyNumJoin.coeL a` would leave `β` a metavar.
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Add γ] : PyHAdd α β γ where
+  hAdd a b := j.coeL a + j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Sub γ] : PyHSub α β γ where
+  hSub a b := j.coeL a - j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Mul γ] : PyHMul α β γ where
+  hMul a b := j.coeL a * j.coeR b
+instance (priority := low) {α β γ} [j : PyNumJoin α β γ] [Div γ] : PyHDiv α β γ where
+  hDiv a b := j.coeL a / j.coeR b
 
 
 /-- Python-style floor division: `a // b` truncates toward negative infinity. -/
@@ -239,5 +379,23 @@ def pyShiftLeft (a b : Int) : Int := a * (2 ^ b.toNat)
 
 /-- Python `a >> b` (floor division by `2 ^ b`). -/
 def pyShiftRight (a b : Int) : Int := Int.fdiv a (2 ^ b.toNat)
+
+/-!
+## Reduction lemmas — `simp` rewrites the Python operators to the standard ones
+
+Generated code uses `+ₚ -ₚ *ₚ /ₚ` (the `PyH*` typeclasses). They are *definitionally* the
+ordinary `ℚ`/`ℤ` operators, but `ring`/`nlinarith`/`linarith` don't see through the notation.
+These `@[simp]` lemmas (all `rfl`) let a proof do `simp [myFunc]` to expose plain `+ - * /`, after
+which `ring`/`nlinarith` close the goal. So theorems can be proved directly on the generated
+`ℚ` definitions (no re-statement over `ℝ`). -/
+
+@[simp] theorem pyAdd_rat (a b : ℚ) : a +ₚ b = a + b := rfl
+@[simp] theorem pySub_rat (a b : ℚ) : a -ₚ b = a - b := rfl
+@[simp] theorem pyMul_rat (a b : ℚ) : a *ₚ b = a * b := rfl
+@[simp] theorem pyDiv_rat (a b : ℚ) : a /ₚ b = a / b := rfl
+
+@[simp] theorem pyAdd_int (a b : ℤ) : a +ₚ b = a + b := rfl
+@[simp] theorem pySub_int (a b : ℤ) : a -ₚ b = a - b := rfl
+@[simp] theorem pyMul_int (a b : ℤ) : a *ₚ b = a * b := rfl
 
 end PyAstLean

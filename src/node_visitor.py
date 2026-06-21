@@ -653,12 +653,28 @@ class ASTToJsonLeanVisitorBase:
         """Translates one interpolated f-string segment."""
         if node.conversion != -1:
             raise NotImplementedError("FormattedValue conversions are not supported.")
-        if node.format_spec is not None:
-            raise NotImplementedError("FormattedValue format specs are not supported.")
-        return {
+        result = {
             "node_type": "FormattedValue",
-            "value": self.visit(node.value)
+            "value": self.visit(node.value),
         }
+        if node.format_spec is not None:
+            spec = self._const_format_spec(node.format_spec)
+            if spec is None:
+                raise NotImplementedError("Only constant f-string format specs are supported.")
+            result["format_spec"] = spec
+        return result
+
+    @staticmethod
+    def _const_format_spec(fmt):
+        """A format spec is itself a (usually constant) JoinedStr, e.g. `.2f`. Extract the literal
+        text if it is a single constant string; otherwise None (dynamic specs unsupported)."""
+        if isinstance(fmt, ast.Constant) and isinstance(fmt.value, str):
+            return fmt.value
+        if (isinstance(fmt, ast.JoinedStr) and len(fmt.values) == 1
+                and isinstance(fmt.values[0], ast.Constant)
+                and isinstance(fmt.values[0].value, str)):
+            return fmt.values[0].value
+        return None
 
     def visit_Module(self, node):
         """Translates ast.Module to a JSON IR node."""

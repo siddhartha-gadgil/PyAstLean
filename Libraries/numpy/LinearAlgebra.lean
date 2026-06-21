@@ -52,10 +52,21 @@ def pyNumpyDotFloats : List Float -> List Float -> Float
   | x :: xs, y :: ys => x * y + pyNumpyDotFloats xs ys
   | _, _ => panic! "ValueError: dot() expects vectors of the same length"
 
-/-- Dot product of two vectors, converting entries to `Float`. -/
-def pyNumpyDot {α β} [PyNumpyScalar α] [PyNumpyScalar β] (lhs : List α) (rhs : List β) : Float :=
+/-- Dot product over an arbitrary numeric type. Only needs `+`, `*`, `0` — NOT `Field`
+(crucially `Float` is not a Mathlib `Field`, but is `Add`/`Mul`/`Zero`). -/
+def pyNumpyDotField {γ} [Add γ] [Mul γ] [Zero γ] [Inhabited γ] : List γ -> List γ -> γ
+  | [], [] => 0
+  | x :: xs, y :: ys => x * y + pyNumpyDotField xs ys
+  | _, _ => panic! "ValueError: dot() expects vectors of the same length"
+
+/-- Dot product of two vectors whose element types may DIFFER (e.g. `ℚ` data · `ℝ` weights in a
+neural net under exact mode). Both element types join to a common compute type `γ` via
+`PyNumpyJoin` (`(ℚ,ℝ)→ℝ`, same-type pairs → their `PyNumpyCompute` field). -/
+def pyNumpyDot {α β γ} [PyNumpyJoin α β γ] [Add γ] [Mul γ] [Zero γ] [Inhabited γ]
+    (lhs : List α) (rhs : List β) : γ :=
   if lhs.length = rhs.length then
-    pyNumpyDotFloats (lhs.map toFloat) (rhs.map toFloat)
+    pyNumpyDotField (lhs.map (fun x => PyNumpyJoin.castL (β := β) x))
+                    (rhs.map (fun y => PyNumpyJoin.castR (α := α) y))
   else
     panic! "ValueError: dot() expects vectors of the same length"
 

@@ -185,7 +185,7 @@ def shouldParenthesizeReturnValue (value : Json) : Bool :=
 @[pygen "Assign"]
 def assignSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
-    | `command, json => do
+    | `command, json => withRealIfMarked json do
         let .ok target := json.getObjVal? "target" | throwError
           s!"Assign node does not have a 'target' field or it is not a JSON value: {json}"
         let .ok value := json.getObjVal? "value" | throwError
@@ -216,7 +216,7 @@ def assignSyntax : (kind : SyntaxNodeKind) → Json →
             let nameIdent ← getCode target `ident
             let valueStx ← getCode value `term
             applyPrivacy nameIdent.getId.toString (← `(def $nameIdent := $valueStx))
-    | `doElem, json => do
+    | `doElem, json => withRealIfMarked json do
         let .ok target := json.getObjVal? "target" | throwError
           s!"Assign node does not have a 'target' field or it is not a JSON value: {json}"
         let .ok value := json.getObjVal? "value" | throwError
@@ -318,7 +318,7 @@ def annAssignSyntax : (kind : SyntaxNodeKind) → Json →
 @[pygen "Return"]
 def returnSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
-    | `doElem, json => do
+    | `doElem, json => withRealIfMarked json do
         let .ok value := json.getObjVal? "value" | throwError
           s!"Return node does not have a 'value' field or it is not a JSON value: {json}"
         match value with

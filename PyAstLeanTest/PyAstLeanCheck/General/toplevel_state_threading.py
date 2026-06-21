@@ -1,6 +1,6 @@
 # PYASTLEANCHECK START
 # TARGET: command
-# CHECK: def main :=
+# CHECK: def main' :=
 # CHECK: "hi"
 # CHECK: def x₀ :=
 # CHECK: (0 : Int)
@@ -48,8 +48,9 @@
 # versioned (`x₀`) so the clean name (`x`) holds the block's result, and each result def
 # is named after a short position-based hash so distinct blocks never collide.
 #
-# A standalone `def main()` (with no `__main__` guard) keeps the name `main`, since here
-# it is just a normal, importable function rather than the entry point.
+# A standalone `def main()` (with no `__main__` guard) is renamed to `main'` in Lean, since
+# Lean reserves the top-level name `main` for the program entry point (which must have type
+# `IO (UInt32 | Unit | PUnit)`). Here it is just a normal helper, so it yields the name.
 
 def main():
     return "hi"
