@@ -1,6 +1,6 @@
-import PyAstLean.PyAPI.CommonProtocols.Iterable
-import PyAstLean.PyAPI.PyPrint
-import PyAstLean.PyAPI.Core
+import PastaLean.PyAPI.CommonProtocols.Iterable
+import PastaLean.PyAPI.PyPrint
+import PastaLean.PyAPI.Core
 
 namespace Libraries.pandas
 
@@ -16,10 +16,10 @@ instance : Inhabited DataFrame where
   default := { columns := {}, index := [] }
 
 /-- Helper function to construct DataFrame from raw data -/
-def pyDataFrameFunc {α β γ} [PyAstLean.PyIterable α β] [PyAstLean.PyIterable β γ] [PyAstLean.PyPrintable γ] [Inhabited β]
+def pyDataFrameFunc {α β γ} [PastaLean.PyIterable α β] [PastaLean.PyIterable β γ] [PastaLean.PyPrintable γ] [Inhabited β]
   (data : α) (index : Option (List String)) (columns : Option (List String))
     : DataFrame :=
-  let rows := PyAstLean.pyIter data|>.map (fun row => PyAstLean.pyIter row|>.map (fun val => PyAstLean.PyPrintable.pyStringify val))
+  let rows := PastaLean.pyIter data|>.map (fun row => PastaLean.pyIter row|>.map (fun val => PastaLean.PyPrintable.pyStringify val))
   match index, columns with
   | some idx, some cols =>
     if rows.length != idx.length || rows.length != cols.length then
@@ -30,7 +30,7 @@ def pyDataFrameFunc {α β γ} [PyAstLean.PyIterable α β] [PyAstLean.PyIterabl
     if rows.length != idx.length then
       panic! "ValueError: DataFrame constructor expects data and index to have the same length"
     else
-      let defaultCols := List.range (PyAstLean.pyIter (PyAstLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
+      let defaultCols := List.range (PastaLean.pyIter (PastaLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
       { columns := Std.HashMap.ofList (List.zip defaultCols rows), index := idx }
   | none, some cols =>
     if rows.length != cols.length then
@@ -40,7 +40,7 @@ def pyDataFrameFunc {α β γ} [PyAstLean.PyIterable α β] [PyAstLean.PyIterabl
       { columns := Std.HashMap.ofList (List.zip cols rows), index := defaultIdx }
   | none, none =>
     let defaultIdx := List.range rows.length|>.map (fun i => "row" ++ toString i)
-    let defaultCols := List.range (PyAstLean.pyIter (PyAstLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
+    let defaultCols := List.range (PastaLean.pyIter (PastaLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
     { columns := Std.HashMap.ofList (List.zip defaultCols rows), index := defaultIdx }
 
 instance : Coe (Array String) (Option (List String)) where
@@ -51,7 +51,7 @@ instance : Coe (List String) (Option (List String)) where
 
 set_option linter.unusedVariables false in
 /-- Main DataFrame constructor with optional parameters -/
-def pyDataFrame {α β γ} [PyAstLean.PyIterable α β] [PyAstLean.PyIterable β γ] [PyAstLean.PyPrintable γ] [Inhabited β]
+def pyDataFrame {α β γ} [PastaLean.PyIterable α β] [PastaLean.PyIterable β γ] [PastaLean.PyPrintable γ] [Inhabited β]
   (data : α)
   (index : Option (List String) := none) (columns : Option (List String) := none) (dtype copy : Unit := ())
     : DataFrame :=
