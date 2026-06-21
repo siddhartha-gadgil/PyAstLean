@@ -2,7 +2,7 @@
 """End-to-end CNN showcase on REAL images: the same net, trained in Python and in Lean.
 
 This script does the data plumbing and the comparison; the *learning logic* lives entirely
-in `model.py` -- a single self-contained file that both CPython runs directly and PyAstLean
+in `model.py` -- a single self-contained file that both CPython runs directly and PastaLean
 transpiles to Lean 4. There is no second copy of the network and nothing is hardcoded into
 the model: the dataset is decoded here and streamed to both runtimes as plain floats on stdin.
 
@@ -13,13 +13,13 @@ Pipeline:
      serialise the whole dataset as a flat list of floats (the stdin payload).
   3. Feed that payload to `model.py` two ways:
         - straight in CPython, and
-        - transpiled to Lean 4 by PyAstLean (`src/py2lean.py`), compiled and executed with
+        - transpiled to Lean 4 by PastaLean (`src/py2lean.py`), compiled and executed with
           `lake env lean --run` -- reading the very same floats from stdin.
   4. Compare the two backends and render two visuals:
         - an ASCII report in the terminal (the 8x8 grid the net actually sees), and
         - `gallery.png`, a montage of the real digits annotated with truth / Python / Lean.
 
-    source /home/anirudhgupta/PyAstLean/.venv/bin/activate
+    source /home/anirudhgupta/PastaLean/.venv/bin/activate
     python3 example_scripts/showcase/cnn/run_showcase.py
 """
 
@@ -81,7 +81,7 @@ def build_stdin(images, labels):
 
 
 # --------------------------------------------------------------------------------------
-# 3. Run model.py in Python and (via PyAstLean -> Lean) in Lean, both fed the same stdin.
+# 3. Run model.py in Python and (via PastaLean -> Lean) in Lean, both fed the same stdin.
 # --------------------------------------------------------------------------------------
 def run_python(payload):
     proc = subprocess.run([sys.executable, str(MODEL_PY)], input=payload,
@@ -121,7 +121,7 @@ def parse_predictions(output):
 def report(images, labels, py_preds, lean_preds, py_acc, lean_acc):
     bar = "=" * 78
     print(bar)
-    print("  PyAstLean CNN showcase  --  one network, trained in Python AND in Lean")
+    print("  PastaLean CNN showcase  --  one network, trained in Python AND in Lean")
     print(bar)
     print(f"  data    : {len(images)} real MNIST digits (0 vs 1), downsampled to {GRID}x{GRID}")
     print("  model   : 2x2 conv -> ReLU -> dense(49->1) -> sigmoid, 250 epochs SGD")
@@ -178,7 +178,7 @@ def save_gallery(originals, labels, py_preds, lean_preds, py_acc, lean_acc):
     rows = (count + cols - 1) // cols
 
     f_title, f_sub, f_cell = _font(24), _font(15), _font(15)
-    title = "PyAstLean CNN  -  Python vs Lean on real MNIST digits"
+    title = "PastaLean CNN  -  Python vs Lean on real MNIST digits"
 
     bg = (18, 18, 24)
     probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
@@ -230,7 +230,7 @@ def main():
     print("[1/3] running the network in Python ...", file=sys.stderr)
     py_out = run_python(payload)
 
-    print("[2/3] transpiling the network to Lean 4 with PyAstLean ...", file=sys.stderr)
+    print("[2/3] transpiling the network to Lean 4 with PastaLean ...", file=sys.stderr)
     transpile_to_lean()
 
     print("[3/3] compiling & running the Lean network (lake env lean --run) ...",

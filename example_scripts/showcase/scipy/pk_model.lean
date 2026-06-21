@@ -1,13 +1,13 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
 set_option linter.all false
 /-
-A pharmacokinetic (PK) drug-concentration simulator -- the dynamical core PyAstLean
+A pharmacokinetic (PK) drug-concentration simulator -- the dynamical core PastaLean
 transpiles to Lean 4.
 
 Classic two-compartment model with first-order oral absorption and repeated dosing:
@@ -20,7 +20,7 @@ only reads the parameters from stdin, administers doses, and steps the integrato
 is dropped into the gut every `dose_step` steps, so plasma concentration climbs with each dose,
 converges to a steady state, then washes out -- the textbook drug-accumulation curve.
 
-Run directly it uses real SciPy; transpiled by PyAstLean it uses the Mathlib-only `Libraries.scipy`
+Run directly it uses real SciPy; transpiled by PastaLean it uses the Mathlib-only `Libraries.scipy`
 shim. The showcase runs both and overlays the Python and Lean trajectories.
 -/
 def depot_rate := fun (ka : Rat) ↦ fun (depot : Rat) ↦
@@ -87,26 +87,26 @@ def body_load'rn := fun (depot : Float) ↦ fun (central : Float) ↦ fun (perip
 
 noncomputable def main' :=
   ((do
-      let mut ka := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut ke := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut k12 := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut k21 := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut vol := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut dose := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut dt := PyAstLean.pyRat (← PyAstLean.pyInputIO "")
-      let mut dose_step := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut ndoses := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut nsteps := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut every := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
+      let mut ka := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut ke := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut k12 := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut k21 := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut vol := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut dose := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut dt := PastaLean.pyRat (← PastaLean.pyInputIO "")
+      let mut dose_step := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut ndoses := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut nsteps := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut every := PastaLean.pyInt (← PastaLean.pyInputIO "")
       let mut depot := (0.0 : Rat)
       let mut central := (0.0 : Rat)
       let mut periph := (0.0 : Rat)
       let mut t := (0.0 : Rat)
       let mut dose_num := (0 : Int)
-      for step in (PyAstLean.pyRange nsteps)do
+      for step in (PastaLean.pyRange nsteps)do
         -- Administer a dose into the gut depot when one is due.
-        if step %ₚ dose_step == (0 : Int) then 
-          if decide (dose_num < ndoses) then 
+        if step %ₚ dose_step == (0 : Int) then
+          if decide (dose_num < ndoses) then
             depot := depot +ₚ dose
             dose_num := dose_num +ₚ (1 : Int)
           else
@@ -121,7 +121,7 @@ noncomputable def main' :=
         central := central +ₚ d_central *ₚ dt
         periph := periph +ₚ d_periph *ₚ dt
         t := t +ₚ dt
-        if step %ₚ every == (0 : Int) then 
+        if step %ₚ every == (0 : Int) then
           let _ ← pyPrintNoop
         else
           let _ := ()) :
@@ -129,26 +129,26 @@ noncomputable def main' :=
 
 def main''rn :=
   ((do
-      let mut ka := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut ke := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut k12 := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut k21 := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut vol := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut dose := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut dt := PyAstLean.pyFloat (← PyAstLean.pyInputIO "")
-      let mut dose_step := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut ndoses := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut nsteps := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
-      let mut every := PyAstLean.pyInt (← PyAstLean.pyInputIO "")
+      let mut ka := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut ke := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut k12 := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut k21 := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut vol := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut dose := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut dt := PastaLean.pyFloat (← PastaLean.pyInputIO "")
+      let mut dose_step := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut ndoses := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut nsteps := PastaLean.pyInt (← PastaLean.pyInputIO "")
+      let mut every := PastaLean.pyInt (← PastaLean.pyInputIO "")
       let mut depot := (0.0 : Float)
       let mut central := (0.0 : Float)
       let mut periph := (0.0 : Float)
       let mut t := (0.0 : Float)
       let mut dose_num := (0 : Int)
-      for step in (PyAstLean.pyRange nsteps)do
+      for step in (PastaLean.pyRange nsteps)do
         -- Administer a dose into the gut depot when one is due.
-        if step %ₚ dose_step == (0 : Int) then 
-          if decide (dose_num < ndoses) then 
+        if step %ₚ dose_step == (0 : Int) then
+          if decide (dose_num < ndoses) then
             depot := depot +ₚ dose
             dose_num := dose_num +ₚ (1 : Int)
           else
@@ -163,7 +163,7 @@ def main''rn :=
         central := central +ₚ d_central *ₚ dt
         periph := periph +ₚ d_periph *ₚ dt
         t := t +ₚ dt
-        if step %ₚ every == (0 : Int) then 
+        if step %ₚ every == (0 : Int) then
           let _ ←
             pyPrintIO
                 [pyPrintArg "S", pyPrintArg step, pyPrintArg t, pyPrintArg (concentration'rn central vol),

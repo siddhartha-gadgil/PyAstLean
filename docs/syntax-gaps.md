@@ -46,14 +46,14 @@ Listed here as eventual real-support targets.
       integer bounds (`np.linspace(0, 100, n)`) work. A full ODE simulation now transpiles,
       compiles, and runs (matching real SciPy to display precision).
 - [x] **f-string format specs `:.Nf`** — `f"{x:.2f}"` now lowers to `pyFormatSpec`/`pyFixedFloat`
-      (`PyAstLean/PyAPI/PyPrint.lean`); `node_visitor` captures a constant `format_spec`,
+      (`PastaLean/PyAPI/PyPrint.lean`); `node_visitor` captures a constant `format_spec`,
       `joinedInterpTerm` (CallExpr.lean) wraps the value. Other specs fall back to default render.
 - [x] **Auto-avoid Mathlib name clashes** — a runnable program (has `main`) is wrapped in
       `namespace «_PyProgram»` with a root `main` forwarder (`src/py2lean.py`), so top-level defs
       like `e`/`f`/`normalize` no longer collide ("ambiguous term"). Libraries (no `main`) stay
       un-namespaced so cross-file imports still resolve.
 - [x] **numpy 2-D indexing** — `a[i,j]` / `a[:,j]` (column) / `a[i,:]` (row) on `List (List _)`
-      (`PyAstLean/PyGens/Core/Subscript.lean`, Tuple-slice branch).
+      (`PastaLean/PyGens/Core/Subscript.lean`, Tuple-slice branch).
 - [x] **Best-effort now degrades *backend* failures too.** Previously a `with` statement (which
       `node_visitor` emits IR for but the Lean backend has no generator for) crashed the whole
       transpile even in best-effort. `src/py2lean.py` now catches a per-top-level-statement backend

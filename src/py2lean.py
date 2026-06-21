@@ -65,7 +65,7 @@ def _supported_library_root(module_name):
     return root if root in SUPPORTED_LIBRARY_IMPORTS else None
 
 COMMENT_PLACEHOLDER_RE = re.compile(
-    r"^(?P<indent>\s*)(?:let|def)\s+__pyastlean_comment_(?P<id>\d+)\b.*$"
+    r"^(?P<indent>\s*)(?:let|def)\s+__PastaLean_comment_(?P<id>\d+)\b.*$"
 )
 
 class ASTToJsonLeanVisitor(ASTToJsonLeanVisitorBase):
@@ -978,9 +978,9 @@ class LeanBackendClient:
             if path.exists():
                 yield path
 
-        pyastlean_dir = self.cwd / "PyAstLean"
-        if pyastlean_dir.exists():
-            yield from pyastlean_dir.rglob("*.lean")
+        PastaLean_dir = self.cwd / "PastaLean"
+        if PastaLean_dir.exists():
+            yield from PastaLean_dir.rglob("*.lean")
         libraries_dir = self.cwd / "Libraries"
         if libraries_dir.exists():
             yield from libraries_dir.rglob("*.lean")
@@ -1532,11 +1532,11 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                 # runtime imports, then the user's cross-file modules, then the `open`s.
                 crossfile_imports = _crossfile_import_lines(body)
                 preamble_lines = [
-                    "import PyAstLean",
+                    "import PastaLean",
                     "import Libraries",
                     *crossfile_imports,
                     "",
-                    "open PyAstLean",
+                    "open PastaLean",
                     "open Libraries",
                     "\n",
                     "set_option linter.all false" # shut up warnings which annoyingly popup in output

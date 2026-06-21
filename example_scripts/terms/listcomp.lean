@@ -1,11 +1,11 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
 set_option linter.all false
 def l :=
-  (PyAstLean.pyIter [[(1 : Int), (2 : Int), (3 : Int)], [(4 : Int), (5 : Int), (6 : Int)]]).flatMap fun l =>
-    (PyAstLean.pyIter l).flatMap fun x => (PyAstLean.pyIter l).map fun y => x *ₚ y
+  (PastaLean.pyIter [[(1 : Int), (2 : Int), (3 : Int)], [(4 : Int), (5 : Int), (6 : Int)]]).flatMap fun l =>
+    (PastaLean.pyIter l).flatMap fun x => (PastaLean.pyIter l).map fun y => x *ₚ y

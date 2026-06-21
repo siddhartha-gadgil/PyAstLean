@@ -1,7 +1,7 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
@@ -31,10 +31,10 @@ noncomputable def mean_squared_error := fun (xs : List (List Rat)) ↦ fun (ys :
   Id.run
     (do
       let mut total := (0.0 : Real)
-      for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut diff := predict xs⦋i⦌ w1 b1 w2 b2 -ₚ ys⦋i⦌
         total := total +ₚ diff *ₚ diff
-      let __py_ret := total /ₚ PyAstLean.pyLen xs
+      let __py_ret := total /ₚ PastaLean.pyLen xs
       return __py_ret)
 
 def mean_squared_error'rn := fun (xs : List (List Float)) ↦ fun (ys : List Float) ↦ fun (w1 : List (List Float)) ↦
@@ -42,10 +42,10 @@ def mean_squared_error'rn := fun (xs : List (List Float)) ↦ fun (ys : List Flo
   Id.run
     (do
       let mut total := (0.0 : Float)
-      for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut diff := predict'rn xs⦋i⦌ w1 b1 w2 b2 -ₚ ys⦋i⦌
         total := total +ₚ diff *ₚ diff
-      let __py_ret := total /ₚ PyAstLean.pyLen xs
+      let __py_ret := total /ₚ PastaLean.pyLen xs
       return __py_ret)
 
 noncomputable def main' :=
@@ -64,8 +64,8 @@ noncomputable def main' :=
       let mut epochs := (4000 : Int)
       let _ ← pyPrintNoop
       let _ ← pyPrintNoop
-      for epoch in (PyAstLean.pyRange epochs)do
-        for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for epoch in (PastaLean.pyRange epochs)do
+        for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
           let mut x := xs⦋i⦌
           let mut y := ys⦋i⦌
           -- Forward pass, keeping the hidden activations for backprop.
@@ -79,24 +79,24 @@ noncomputable def main' :=
           let mut d_h1 := d_out *ₚ w2⦋(0 : Int)⦌⦋(1 : Int)⦌ *ₚ h1 *ₚ ((1.0 : Real) -ₚ h1)
           -- Gradient-descent step (rebuild each weight row in place).
           w2 :=
-            PyAstLean.pySetItem w2 (0 : Int)
+            PastaLean.pySetItem w2 (0 : Int)
               [w2⦋(0 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_out *ₚ h0, w2⦋(0 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_out *ₚ h1]
           b2 := [b2⦋(0 : Int)⦌ -ₚ lr *ₚ d_out]
           w1 :=
-            PyAstLean.pySetItem w1 (0 : Int)
+            PastaLean.pySetItem w1 (0 : Int)
               [w1⦋(0 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(0 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h0 *ₚ x⦋(1 : Int)⦌]
           w1 :=
-            PyAstLean.pySetItem w1 (1 : Int)
+            PastaLean.pySetItem w1 (1 : Int)
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then 
+        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
           let _ ← pyPrintNoop
         else
           let _ := ()
       let _ ← pyPrintNoop
-      for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut p := predict xs⦋i⦌ w1 b1 w2 b2
         let mut label := if decide (p > (0.5 : Real)) then (1 : Int) else (0 : Int)
         let _ ← pyPrintNoop) :
@@ -119,8 +119,8 @@ def main''rn :=
       let mut epochs := (4000 : Int)
       let _ ← pyPrintIO [pyPrintArg "=== Training a neural net on XOR (NumPy + math) ==="]
       let _ ← pyPrintIO [pyPrintArg s! "initial loss: {mean_squared_error'rn xs ys w1 b1 w2 b2}"]
-      for epoch in (PyAstLean.pyRange epochs)do
-        for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for epoch in (PastaLean.pyRange epochs)do
+        for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
           let mut x := xs⦋i⦌
           let mut y := ys⦋i⦌
           -- Forward pass, keeping the hidden activations for backprop.
@@ -134,28 +134,28 @@ def main''rn :=
           let mut d_h1 := d_out *ₚ w2⦋(0 : Int)⦌⦋(1 : Int)⦌ *ₚ h1 *ₚ ((1.0 : Float) -ₚ h1)
           -- Gradient-descent step (rebuild each weight row in place).
           w2 :=
-            PyAstLean.pySetItem w2 (0 : Int)
+            PastaLean.pySetItem w2 (0 : Int)
               [w2⦋(0 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_out *ₚ h0, w2⦋(0 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_out *ₚ h1]
           b2 := [b2⦋(0 : Int)⦌ -ₚ lr *ₚ d_out]
           w1 :=
-            PyAstLean.pySetItem w1 (0 : Int)
+            PastaLean.pySetItem w1 (0 : Int)
               [w1⦋(0 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(0 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h0 *ₚ x⦋(1 : Int)⦌]
           w1 :=
-            PyAstLean.pySetItem w1 (1 : Int)
+            PastaLean.pySetItem w1 (1 : Int)
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then 
+        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
           let _ ←
             pyPrintIO [pyPrintArg s!"epoch {(epoch +ₚ (1 : Int))}: loss = {mean_squared_error'rn xs ys w1 b1 w2 b2}"]
         else
           let _ := ()
       let _ ← pyPrintIO [pyPrintArg "learned predictions:"]
-      for i in (PyAstLean.pyRange (PyAstLean.pyLen xs))do
+      for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut p := predict'rn xs⦋i⦌ w1 b1 w2 b2
         let mut label := if decide (p > (0.5 : Float)) then (1 : Int) else (0 : Int)
-        let _ ← pyPrintIO [pyPrintArg s! "  {xs⦋i⦌} -> {p }  (class {label }, target {PyAstLean.pyInt ys⦋i⦌})"]) :
+        let _ ← pyPrintIO [pyPrintArg s! "  {xs⦋i⦌} -> {p }  (class {label }, target {PastaLean.pyInt ys⦋i⦌})"]) :
     IO _)
 
 noncomputable def main : IO Unit := do

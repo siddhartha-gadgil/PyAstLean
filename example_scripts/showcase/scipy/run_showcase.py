@@ -3,10 +3,10 @@
 
 `pk_model.py` is the dynamical core -- a two-compartment PK model with repeated oral dosing.
 This orchestrator streams the parameters on stdin, runs the model two ways (CPython with real
-SciPy, and transpiled to Lean 4 by PyAstLean), checks the two trajectories agree, and animates
+SciPy, and transpiled to Lean 4 by PastaLean), checks the two trajectories agree, and animates
 the drug accumulating to steady state -- with the Python and Lean curves overlaid.
 
-    source /home/anirudhgupta/PyAstLean/.venv/bin/activate
+    source /home/anirudhgupta/PastaLean/.venv/bin/activate
     python3 example_scripts/showcase/scipy/run_showcase.py
 """
 
@@ -166,7 +166,7 @@ def main():
     print("[1/3] running the PK model in Python (real SciPy) ...", file=sys.stderr)
     py = parse(run_python(payload))
 
-    print("[2/3] transpiling the PK model to Lean 4 with PyAstLean ...", file=sys.stderr)
+    print("[2/3] transpiling the PK model to Lean 4 with PastaLean ...", file=sys.stderr)
     transpile_to_lean()
 
     print("[3/3] compiling & running the Lean PK model ...", file=sys.stderr)

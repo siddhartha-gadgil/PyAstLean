@@ -1,0 +1,10 @@
+import PastaLean.PyAPI.Core
+import PastaLean.PyAPI.Input
+import PastaLean.PyAPI.PyPrint
+import PastaLean.PyAPI.Operators
+import PastaLean.PyAPI.Builtins
+import PastaLean.PyAPI.Strings
+import PastaLean.PyAPI.Lists
+import PastaLean.PyAPI.Dicts
+import PastaLean.PyAPI.Sets
+import PastaLean.PyAPI.CommonProtocols

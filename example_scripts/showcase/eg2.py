@@ -31,7 +31,7 @@ def run_example():
         [1.0, 2.0]
     ]
 
-    print("=== PyAstLean NumPy Showcase ===")
+    print("=== PastaLean NumPy Showcase ===")
     print(f"Input Data: {dataset}")
     print(f"Weight Matrix: {weights}")
 

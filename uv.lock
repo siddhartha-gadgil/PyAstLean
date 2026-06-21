@@ -1304,7 +1304,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pyastlean"
+name = "PastaLean"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

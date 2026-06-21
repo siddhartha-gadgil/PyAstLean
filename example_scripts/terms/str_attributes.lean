@@ -1,28 +1,28 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
 set_option linter.all false
 def l :=
-  PyAstLean.pyStringSplit "gh yy uu"
+  PastaLean.pyStringSplit "gh yy uu"
 
 def t :=
-  PyAstLean.pyStringJoin " " l
+  PastaLean.pyStringJoin " " l
 
 def s :=
-  PyAstLean.pyStringStrip t "g"
+  PastaLean.pyStringStrip t "g"
 
 def b1 :=
-  PyAstLean.pyStringStartswith s "h"
+  PastaLean.pyStringStartswith s "h"
 
 def b2 :=
-  PyAstLean.pyStringEndswith s "u"
+  PastaLean.pyStringEndswith s "u"
 
 def s1 :=
-  PyAstLean.pyStringUpper s
+  PastaLean.pyStringUpper s
 
 def s2 :=
-  PyAstLean.pyStringLower s
+  PastaLean.pyStringLower s

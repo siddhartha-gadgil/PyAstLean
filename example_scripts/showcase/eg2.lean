@@ -1,7 +1,7 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
@@ -10,7 +10,7 @@ def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List R
   ((do
       try
         let __py_try_val ←
-          PyAstLean.PyExcept.captureIOErrors
+          PastaLean.PyExcept.captureIOErrors
               (do
                 -- Calculate mean of the dataset
                 let mut m := Libraries.numpy.pyNumpyMean data
@@ -25,7 +25,7 @@ def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List R
                 return result)
         return __py_try_val
       catch caught =>
-        if (caught).OfKind == "ValueError" then 
+        if (caught).OfKind == "ValueError" then
           let e := caught
           let _ ← pyPrintNoop
           -- Fallback to a zero matrix if dimensions fail
@@ -33,13 +33,13 @@ def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List R
           return __py_ret
         else
           throw caught) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
-def process_data'rn : List (List Float) → List (List Float) → PyAstLean.PyExcept (List (List Float)) :=
+def process_data'rn : List (List Float) → List (List Float) → PastaLean.PyExcept (List (List Float)) :=
   fun (data : List (List Float)) ↦ fun (weights : List (List Float)) ↦ do
   try
     let __py_try_val ←
-      PyAstLean.PyExcept.captureIOErrors
+      PastaLean.PyExcept.captureIOErrors
           (do
             -- Calculate mean of the dataset
             let mut m := Libraries.numpy.pyNumpyMean data
@@ -54,7 +54,7 @@ def process_data'rn : List (List Float) → List (List Float) → PyAstLean.PyEx
             return result)
     return __py_try_val
   catch caught =>
-    if (caught).OfKind == "ValueError" then 
+    if (caught).OfKind == "ValueError" then
       let e := caught
       let _ ← pyPrintIO [pyPrintArg s! "Processing failed: {e}"]
       -- Fallback to a zero matrix if dimensions fail
@@ -88,14 +88,14 @@ def run_example :=
       let mut invalid_data := [[(1.0 : Rat), (2.0 : Rat), (3.0 : Rat)]]
       -- This should trigger the ValueError in np.matmul(1x3, 2x2)
       let _ ← process_data invalid_data weights) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 def run_example'rn :=
   ((do
       -- Define a 2x2 dataset and a 2x2 weight matrix
       let mut dataset := [[(1.0 : Float), (2.0 : Float)], [(3.0 : Float), (4.0 : Float)]]
       let mut weights := [[(0.5 : Float), (0.5 : Float)], [(1.0 : Float), (2.0 : Float)]]
-      let _ ← pyPrintIO [pyPrintArg "=== PyAstLean NumPy Showcase ==="]
+      let _ ← pyPrintIO [pyPrintArg "=== PastaLean NumPy Showcase ==="]
       let _ ← pyPrintIO [pyPrintArg s! "Input Data: {dataset}"]
       let _ ← pyPrintIO [pyPrintArg s! "Weight Matrix: {weights}"]
       -- 1. Main Processing Pipeline
@@ -115,14 +115,14 @@ def run_example'rn :=
       let mut invalid_data := [[(1.0 : Float), (2.0 : Float), (3.0 : Float)]]
       -- This should trigger the ValueError in np.matmul(1x3, 2x2)
       let _ ← process_data'rn invalid_data weights) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 def main : IO Unit := do
   let result ←
     (((do
             let _ ← run_example
             pure ()) :
-          PyAstLean.PyExcept Unit)).run
+          PastaLean.PyExcept Unit)).run
   match result with
   | .ok _ =>
     pure ()
@@ -134,7 +134,7 @@ def main'rn : IO Unit := do
     (((do
             let _ ← run_example'rn
             pure ()) :
-          PyAstLean.PyExcept Unit)).run
+          PastaLean.PyExcept Unit)).run
   match result with
   | .ok _ =>
     pure ()

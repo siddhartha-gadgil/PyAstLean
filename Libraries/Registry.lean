@@ -9,7 +9,7 @@ namespace Libraries
 /--
 Registry mapping imported Python library members to Lean runtime functions/constants.
 
-This plays the same role for imported libraries that `PyAstLean.Attributes` plays for
+This plays the same role for imported libraries that `PastaLean.Attributes` plays for
 Python methods: codegen consults this table once an AST node has been recognized as
 coming from a specific imported module.
 -/

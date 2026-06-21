@@ -256,11 +256,11 @@ class ASTToJsonLeanVisitorBase:
         in_block = False
         for line_no, raw_line in enumerate(source_code.splitlines(), start=1):
             stripped = raw_line.strip()
-            if stripped == "# PYASTLEANCHECK START":
+            if stripped == "# PastaLeanCHECK START":
                 in_block = True
             if in_block:
                 ignored.add(line_no)
-            if stripped == "# PYASTLEANCHECK END":
+            if stripped == "# PastaLeanCHECK END":
                 in_block = False
         return ignored
 

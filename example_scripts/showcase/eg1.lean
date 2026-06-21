@@ -1,62 +1,62 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
 set_option linter.all false
 noncomputable def euclidean_distance := fun (p1 : List Int) ↦ fun (p2 : List Int) ↦
   ((do
-      if PyAstLean.pyLen p1 != PyAstLean.pyLen p2 then 
+      if PastaLean.pyLen p1 != PastaLean.pyLen p2 then
         throw
-            (PyAstLean.PyException.Raise "ValueError"
+            (PastaLean.PyException.Raise "ValueError"
               (ToString.toString "Points must have the same number of dimensions"))
       else
         let _ := ()
       -- Using zip, list comprehension, and math.pow
       let mut sq_diffs :=
-        (PyAstLean.pyIter (PyAstLean.pyZip p1 p2)).map fun _pair =>
+        (PastaLean.pyIter (PastaLean.pyZip p1 p2)).map fun _pair =>
           let a := Prod.fst _pair;
           let b := Prod.snd _pair;
           Libraries.math.pyMathPowExact (a -ₚ b) (2 : Int)
-      let __py_ret := Libraries.math.pyMathSqrtR (PyAstLean.pySum sq_diffs)
+      let __py_ret := Libraries.math.pyMathSqrtR (PastaLean.pySum sq_diffs)
       return __py_ret) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
-def euclidean_distance'rn : List Int → List Int → PyAstLean.PyExcept Float := fun (p1 : List Int) ↦
+def euclidean_distance'rn : List Int → List Int → PastaLean.PyExcept Float := fun (p1 : List Int) ↦
   fun (p2 : List Int) ↦ do
-  if PyAstLean.pyLen p1 != PyAstLean.pyLen p2 then 
+  if PastaLean.pyLen p1 != PastaLean.pyLen p2 then
     throw
-        (PyAstLean.PyException.Raise "ValueError" (ToString.toString "Points must have the same number of dimensions"))
+        (PastaLean.PyException.Raise "ValueError" (ToString.toString "Points must have the same number of dimensions"))
   else
     let _ := ()
   -- Using zip, list comprehension, and math.pow
   let mut sq_diffs :=
-    (PyAstLean.pyIter (PyAstLean.pyZip p1 p2)).map fun _pair =>
+    (PastaLean.pyIter (PastaLean.pyZip p1 p2)).map fun _pair =>
       let a := Prod.fst _pair;
       let b := Prod.snd _pair;
       Libraries.math.pyMathPow (a -ₚ b) (2 : Int)
-  let __py_ret := Libraries.math.pyMathSqrt (PyAstLean.pySum sq_diffs)
+  let __py_ret := Libraries.math.pyMathSqrt (PastaLean.pySum sq_diffs)
   return __py_ret
 
 noncomputable def find_nearest_neighbor := fun (target : List Int) ↦ fun (dataset : List (List Int)) ↦
   ((do
       try
         let __py_try_val ←
-          PyAstLean.PyExcept.captureIOErrors
+          PastaLean.PyExcept.captureIOErrors
               (do
                 -- Calculate distances using list comprehension
-                let mut distances := (← (PyAstLean.pyIter dataset).mapM fun point => euclidean_distance target point)
+                let mut distances := (← (PastaLean.pyIter dataset).mapM fun point => euclidean_distance target point)
                 -- Find the minimum distance
-                let mut min_dist := PyAstLean.pyMin distances
+                let mut min_dist := PastaLean.pyMin distances
                 -- Find the index of the minimum distance
                 -- Using a loop since index() might not be supported based on tests
                 let mut min_index := -(1 : Int)
-                for _pair in (PyAstLean.pyIter (PyAstLean.pyEnumerate distances))do
+                for _pair in (PastaLean.pyIter (PastaLean.pyEnumerate distances))do
                   let i := Prod.fst _pair
                   let d := Prod.snd _pair
-                  if d == min_dist then 
+                  if d == min_dist then
                     min_index := i
                     break
                   else
@@ -65,32 +65,32 @@ noncomputable def find_nearest_neighbor := fun (target : List Int) ↦ fun (data
                 return __py_ret)
         return __py_try_val
       catch caught =>
-        if (caught).OfKind == "ValueError" then 
+        if (caught).OfKind == "ValueError" then
           let e := caught
           let _ ← pyPrintNoop
           let __py_ret_1 := (-(1.0 : Real), [])
           return __py_ret_1
         else
           throw caught) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 def find_nearest_neighbor'rn := fun (target : List Int) ↦ fun (dataset : List (List Int)) ↦
   ((do
       try
         let __py_try_val ←
-          PyAstLean.PyExcept.captureIOErrors
+          PastaLean.PyExcept.captureIOErrors
               (do
                 -- Calculate distances using list comprehension
-                let mut distances := (← (PyAstLean.pyIter dataset).mapM fun point => euclidean_distance'rn target point)
+                let mut distances := (← (PastaLean.pyIter dataset).mapM fun point => euclidean_distance'rn target point)
                 -- Find the minimum distance
-                let mut min_dist := PyAstLean.pyMin distances
+                let mut min_dist := PastaLean.pyMin distances
                 -- Find the index of the minimum distance
                 -- Using a loop since index() might not be supported based on tests
                 let mut min_index := -(1 : Int)
-                for _pair in (PyAstLean.pyIter (PyAstLean.pyEnumerate distances))do
+                for _pair in (PastaLean.pyIter (PastaLean.pyEnumerate distances))do
                   let i := Prod.fst _pair
                   let d := Prod.snd _pair
-                  if d == min_dist then 
+                  if d == min_dist then
                     min_index := i
                     break
                   else
@@ -99,14 +99,14 @@ def find_nearest_neighbor'rn := fun (target : List Int) ↦ fun (dataset : List 
                 return __py_ret)
         return __py_try_val
       catch caught =>
-        if (caught).OfKind == "ValueError" then 
+        if (caught).OfKind == "ValueError" then
           let e := caught
           let _ ← pyPrintIO [pyPrintArg s! "Error calculating distances: {e}"]
           let __py_ret_1 := (-(1.0 : Float), [])
           return __py_ret_1
         else
           throw caught) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 noncomputable def run_example :=
   ((do
@@ -132,7 +132,7 @@ noncomputable def run_example :=
       let mut dist_inv := Prod.fst __unpack_pair_1
       let mut nearest_inv := Prod.snd __unpack_pair_1
       let _ ← pyPrintNoop) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 def run_example'rn :=
   ((do
@@ -158,14 +158,14 @@ def run_example'rn :=
       let mut dist_inv := Prod.fst __unpack_pair_1
       let mut nearest_inv := Prod.snd __unpack_pair_1
       let _ ← pyPrintIO [pyPrintArg "Fallback Distance:", pyPrintArg dist_inv]) :
-    PyAstLean.PyExcept _)
+    PastaLean.PyExcept _)
 
 noncomputable def main : IO Unit := do
   let result ←
     (((do
             let _ ← run_example
             pure ()) :
-          PyAstLean.PyExcept Unit)).run
+          PastaLean.PyExcept Unit)).run
   match result with
   | .ok _ =>
     pure ()
@@ -177,7 +177,7 @@ def main'rn : IO Unit := do
     (((do
             let _ ← run_example'rn
             pure ()) :
-          PyAstLean.PyExcept Unit)).run
+          PastaLean.PyExcept Unit)).run
   match result with
   | .ok _ =>
     pure ()

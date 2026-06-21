@@ -1,6 +1,8 @@
-# PyAstLean
+# PastaLean
 
-PyAstLean is a tool that converts Python code into Lean 4.
+PastaLean is a tool that converts Python code into Lean 4.
+
+PastaLean originates from "PyAstLean"(which mean Python to Lean via AST) but who doesn't love Pasta.
 
 ## Usage
 
@@ -35,7 +37,7 @@ python3 src/py2lean.py example_scripts/commands/assignment_arith.py --target com
 
 ### Low-level Lean backend
 
-The executable defined by [py2lean.lean](/home/anirudhgupta/PyAstLean/py2lean.lean:1) is the JSON backend.
+The executable defined by [py2lean.lean](/home/anirudhgupta/PastaLean/py2lean.lean:1) is the JSON backend.
 
 It expects:
 
@@ -66,12 +68,12 @@ per line on stdout. The Python wrapper uses this mode automatically.
 
 ## Installation
 
-To install PyAstLean as a dependency, add the following to your `lakefile.toml`:
+To install PastaLean as a dependency, add the following to your `lakefile.toml`:
 
 ```toml
 [[require]]
-name = "PyAstLean"
-git = "https://github.com/Siddhartha-Gadgil/PyAstLean.git"
+name = "PastaLean"
+git = "https://github.com/Siddhartha-Gadgil/PastaLean.git"
 rev = "v4.29.0"
 ```
 
@@ -92,7 +94,7 @@ pip install -r requirements.txt
 
 ## Libraries
 
-Python libraries can be supported in PyAstLean by writing Lean definitions that correspond to the Python library's API. These definitions can be made by implementing the necessary translation logic in the Lean backend, then added to PyAstLean by creating a mapping using `Mapping.lean` which is simply a map from python name for a function to Your Lean definition.
+Python libraries can be supported in PastaLean by writing Lean definitions that correspond to the Python library's API. These definitions can be made by implementing the necessary translation logic in the Lean backend, then added to PastaLean by creating a mapping using `Mapping.lean` which is simply a map from python name for a function to Your Lean definition.
 
 For example, see [math](./Libraries/math/) library, which uses Mathlib to implement some of the functions from Python's `math` module.
 
@@ -105,7 +107,7 @@ See [Libraries](./Libraries/) for examples of how to add a library and use it.
 ## Testing
 
 
-PyAstLeanCheck (PALC) (pronounced - "pal" + "ack" like PAL Acknowledge) is the testing framework for PyAstLean. It is used to check that the generated Lean code matches the expected output. This is based on the FileCheck utility from LLVM, but with some differences to make it more suitable for our use case.
+PastaLeanCheck (PALC) (pronounced - "pal" + "ack" like PAL Acknowledge) is the testing framework for PastaLean. It is used to check that the generated Lean code matches the expected output. This is based on the FileCheck utility from LLVM, but with some differences to make it more suitable for our use case.
 
 To run all tests:
 ```bash

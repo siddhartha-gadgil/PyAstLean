@@ -1,7 +1,7 @@
-import PyAstLean
+import PastaLean
 import Libraries
 
-open PyAstLean
+open PastaLean
 open Libraries
 
 
@@ -15,9 +15,9 @@ def variance := fun (xs : List Rat) ↦
     (do
       let mut m := Libraries.scipy.pyScipyTmean xs
       let mut total := (0.0 : Rat)
-      for x in (PyAstLean.pyIter xs)do
+      for x in (PastaLean.pyIter xs)do
         total := total +ₚ (x -ₚ m) *ₚ (x -ₚ m)
-      let __py_ret := total /ₚ PyAstLean.pyLen xs
+      let __py_ret := total /ₚ PastaLean.pyLen xs
       return __py_ret)
 
 def variance'rn := fun (xs : List Float) ↦
@@ -25,9 +25,9 @@ def variance'rn := fun (xs : List Float) ↦
     (do
       let mut m := Libraries.scipy.pyScipyTmean xs
       let mut total := (0.0 : Float)
-      for x in (PyAstLean.pyIter xs)do
+      for x in (PastaLean.pyIter xs)do
         total := total +ₚ (x -ₚ m) *ₚ (x -ₚ m)
-      let __py_ret := total /ₚ PyAstLean.pyLen xs
+      let __py_ret := total /ₚ PastaLean.pyLen xs
       return __py_ret)
 
 noncomputable def main' :=

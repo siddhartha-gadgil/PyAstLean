@@ -1,8 +1,8 @@
-name = "PyAstLean"
+name = "PastaLean"
 version = "0.1.0"
 keywords = ["math"]
-defaultTargets = ["PyAstLean", "py2lean"]
-testDriver = "PyAstLeanTest"
+defaultTargets = ["PastaLean", "py2lean"]
+testDriver = "PastaLeanTest"
 
 [leanOptions]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
@@ -13,13 +13,13 @@ scope = "leanprover-community"
 rev = "v4.30.0"
 
 [[lean_lib]]
-name = "PyAstLean"
+name = "PastaLean"
 
 [[lean_lib]]
 name = "Libraries"
 
 [[lean_lib]]
-name = "PyAstLeanTest"
+name = "PastaLeanTest"
 
 [[lean_exe]]
 name="py2lean"

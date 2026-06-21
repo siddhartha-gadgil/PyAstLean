@@ -762,7 +762,7 @@ class Lean4Annotator(cst.CSTTransformer):
         return new_body
 
 
-# Return types of the `numpy`/`math` members PyAstLean actually implements. External stubgen
+# Return types of the `numpy`/`math` members PastaLean actually implements. External stubgen
 # leaves most of these as `Any` (e.g. `np.dot` → `Any`), which then poisons the element type of
 # anything built from them (`[np.dot(...) for ...]` becomes `list[Any]`, so the iterating
 # parameter never resolves on the Lean side). These mirror the concrete result types of the
@@ -1309,7 +1309,7 @@ class FlowTracker(cst.CSTVisitor):
             elif isinstance(node.func, cst.Attribute) and isinstance(node.func.value, cst.Name):
                 if node.func.attr.value == "get" and len(node.args) > 1:
                     return self._infer_node(node.args[1].value)
-                # Known `numpy`/`math` members resolve to the result type of their PyAstLean
+                # Known `numpy`/`math` members resolve to the result type of their PastaLean
                 # runtime function, recovering element types that external stubs leave as `Any`.
                 mod: str | None = self.module_aliases.get(node.func.value.value)
                 if mod is not None:

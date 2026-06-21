@@ -1,4 +1,4 @@
-"""A pharmacokinetic (PK) drug-concentration simulator -- the dynamical core PyAstLean
+"""A pharmacokinetic (PK) drug-concentration simulator -- the dynamical core PastaLean
 transpiles to Lean 4.
 
 Classic two-compartment model with first-order oral absorption and repeated dosing:
@@ -11,7 +11,7 @@ only reads the parameters from stdin, administers doses, and steps the integrato
 is dropped into the gut every `dose_step` steps, so plasma concentration climbs with each dose,
 converges to a steady state, then washes out -- the textbook drug-accumulation curve.
 
-Run directly it uses real SciPy; transpiled by PyAstLean it uses the Mathlib-only `Libraries.scipy`
+Run directly it uses real SciPy; transpiled by PastaLean it uses the Mathlib-only `Libraries.scipy`
 shim. The showcase runs both and overlays the Python and Lean trajectories.
 """
 

@@ -1,7 +1,7 @@
-# PyAstLean — orientation for AI sessions
+# PastaLean — orientation for AI sessions
 
-PyAstLean is a **Python → Lean 4 transpiler**. It takes ordinary Python source and emits
-Lean 4 code that elaborates against a hand-written runtime (`PyAstLean.PyAPI`) modelling
+PastaLean is a **Python → Lean 4 transpiler**. It takes ordinary Python source and emits
+Lean 4 code that elaborates against a hand-written runtime (`PastaLean.PyAPI`) modelling
 Python's semantics. The motivating use case is the "logic side of data science" /
 competitive-programming-style code: ints, strings, lists, dicts, loops, comprehensions,
 functions, exceptions.
@@ -49,11 +49,11 @@ this directly — `src/py2lean.py` drives it.
 
 ---
 
-## The Lean side: `PyAstLean/`
+## The Lean side: `PastaLean/`
 
-Two layers, with its own `PyAstLean/README.md` giving the detailed "what goes where".
+Two layers, with its own `PastaLean/README.md` giving the detailed "what goes where".
 
-### `PyAstLean/PyAPI/` — the runtime
+### `PastaLean/PyAPI/` — the runtime
 Lean implementations of Python-like behavior. Generated code calls into these. If you are
 implementing *what a Python operation does*, it goes here.
 
@@ -76,7 +76,7 @@ implementing *what a Python operation does*, it goes here.
   instance carries that type as an `outParam` class parameter, never an associated-type field
   — associated-type projections stay "stuck" and break downstream instance resolution.
 
-### `PyAstLean/PyGens/` — the code generator
+### `PastaLean/PyGens/` — the code generator
 JSON-IR-node → Lean `Syntax`. If you are deciding *how a Python AST node emits Lean syntax*,
 it goes here. Each generator is a function tagged `@[pygen "NodeType"]` returning
 `PygenM (TSyntax kind)`; `getCode json kind` dispatches to the registered generator by
@@ -110,22 +110,22 @@ await into the pure position rather than letting a raw `IO _` leak — see `inli
 ## Other top-level pieces
 
 - `Libraries/` (lean lib `Libraries`) — a small standard-library surface that generated code
-  `open`s alongside `PyAstLean` (e.g. numpy-like shims under `PyAstLeanTest/Libraries/numpy`).
+  `open`s alongside `PastaLean` (e.g. numpy-like shims under `PastaLeanTest/Libraries/numpy`).
 - `example_scripts/` — sample Python inputs grouped by `--target`: `terms/`, `commands/`,
   `modules/`. Good smoke-test inputs.
 - `docs/phases.md` — design notes on the translation phases.
 
 ## Tests
 
-- **`PyAstLeanTest/`** (lean lib + `testDriver`) — the test suite, run by `lake test` /
-  `lake build PyAstLeanTest`.
-  - `PyAstLeanTest/PyAstLeanCheck/` — **PALC** (PyAstLean Check) golden tests. A `.py` file
+- **`PastaLeanTest/`** (lean lib + `testDriver`) — the test suite, run by `lake test` /
+  `lake build PastaLeanTest`.
+  - `PastaLeanTest/PastaLeanCheck/` — **PALC** (PastaLean Check) golden tests. A `.py` file
     carries `# CHECK:` / `# CHECK-EXACT:` / `# CHECK-NOT:` / `# CHECK-ERR:` directives
-    describing the expected generated Lean; the runner (`PyAstLeanCheck.lean`, exe `palc`)
+    describing the expected generated Lean; the runner (`PastaLeanCheck.lean`, exe `palc`)
     verifies the output and **fails the build on mismatch**. Many of these assert *syntax*, not
     full elaboration — so changing a runtime instance's type won't move a syntax CHECK, but
     changing emitted syntax will.
-  - `PyAstLeanTest/PyAPI/`, `.../Libraries/` — runtime unit checks (`#eval`/`#check`).
+  - `PastaLeanTest/PyAPI/`, `.../Libraries/` — runtime unit checks (`#eval`/`#check`).
 - **`cp_harness/`** — an end-to-end harness over real competitive-programming Python solutions
   (`cp_harness/dataset/<problem>/solutions/sol_*.py`). `convert.py` wraps bare top-level code in
   a `__main__` guard, translates with `py2lean.py --target command`, compile-checks the Lean,
@@ -135,9 +135,9 @@ await into the pure position rather than letting a raw `IO _` leak — see `inli
 ## Build / run quick reference
 
 ```bash
-lake build                  # build PyAstLean + py2lean (default targets)
+lake build                  # build PastaLean + py2lean (default targets)
 lake build py2lean          # just the transpiler backend
-lake test                   # run PyAstLeanTest (incl. PALC golden tests)
+lake test                   # run PastaLeanTest (incl. PALC golden tests)
 lake exe palc <dir|file>    # run PALC checks directly
 ```
 
@@ -154,4 +154,4 @@ lake exe palc <dir|file>    # run PALC checks directly
 - **`def main` appears only when the source has a `main`/`__main__`.** The general transpiler
   never auto-wraps bare code; only `cp_harness/convert.py` adds a `__main__` guard for the
   harness.
-- Generated programs start with `import PyAstLean` / `import Libraries` and `open` both.
+- Generated programs start with `import PastaLean` / `import Libraries` and `open` both.
