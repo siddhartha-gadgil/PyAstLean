@@ -4,25 +4,27 @@ import Libraries
 open PyAstLean
 open Libraries
 
-noncomputable def main' :=
+
+set_option linter.all false
+def main' :=
   ((do
       -- parameters for the 3-body system (grass, rabbits, wolves)
       -- grass growth rate
-      let mut r := (1.2 : Rat)
+      let mut r := (1.2 : Float)
       -- grass carrying capacity
-      let mut k := (100.0 : Rat)
+      let mut k := (100.0 : Float)
       -- rabbit consumption of grass
-      let mut a := (0.1 : Rat)
+      let mut a := (0.1 : Float)
       -- rabbit birth rate from grass
-      let mut b := (0.05 : Rat)
+      let mut b := (0.05 : Float)
       -- rabbit natural death rate
-      let mut d := (0.4 : Rat)
+      let mut d := (0.4 : Float)
       -- wolf consumption of rabbits
-      let mut c := (0.1 : Rat)
+      let mut c := (0.1 : Float)
       -- wolf birth rate from rabbits
-      let mut e := (0.02 : Rat)
+      let mut e := (0.02 : Float)
       -- wolf natural death rate
-      let mut _f := (0.3 : Rat)
+      let mut _f := (0.3 : Float)
       let system := fun state ↦ fun t ↦
         let __py_unpack1 := state
         let g := __py_unpack1⦋(0 : Int)⦌
@@ -36,7 +38,7 @@ noncomputable def main' :=
         let dwdt := e *ₚ r_pop *ₚ w -ₚ _f *ₚ w
         [dgdt, drdt, dwdt]
       -- initial conditions: 50 grass, 10 rabbits, 5 wolves
-      let mut init_state := [(50.0 : Rat), (10.0 : Rat), (5.0 : Rat)]
+      let mut init_state := [(50.0 : Float), (10.0 : Float), (5.0 : Float)]
       -- time points
       let mut t := Libraries.numpy.pyNumpyLinspace (0 : Int) (100 : Int) (5000 : Int)
       -- solve the ODE
@@ -50,11 +52,11 @@ noncomputable def main' :=
       let _ ← pyPrintIO [pyPrintArg "Time | Grass | Rabbits | Wolves"]
       for i in (PyAstLean.pyRange (5000 : Int) (0 : Int) (100 : Int))do
         -- bunching up printing and math
-        let mut avg := (grass⦋i⦌ +ₚ rabbits⦋i⦌ +ₚ wolves⦋i⦌) /ₚ (3.0 : Rat)
+        let mut avg := (grass⦋i⦌ +ₚ rabbits⦋i⦌ +ₚ wolves⦋i⦌) /ₚ (3.0 : Float)
         let mut entropy :=
-          -(grass⦋i⦌ *ₚ Libraries.math.pyMathLogR (grass⦋i⦌ +ₚ (1 : Int)) +ₚ
-                rabbits⦋i⦌ *ₚ Libraries.math.pyMathLogR (rabbits⦋i⦌ +ₚ (1 : Int)) +ₚ
-              wolves⦋i⦌ *ₚ Libraries.math.pyMathLogR (wolves⦋i⦌ +ₚ (1 : Int)))
+          -(grass⦋i⦌ *ₚ Libraries.math.pyMathLog (grass⦋i⦌ +ₚ (1 : Int)) +ₚ
+                rabbits⦋i⦌ *ₚ Libraries.math.pyMathLog (rabbits⦋i⦌ +ₚ (1 : Int)) +ₚ
+              wolves⦋i⦌ *ₚ Libraries.math.pyMathLog (wolves⦋i⦌ +ₚ (1 : Int)))
         let _ ←
           pyPrintIO
               [pyPrintArg
@@ -65,7 +67,7 @@ noncomputable def main' :=
                       ".2f")} | Avg: {(PyAstLean.pyFormatSpec avg
                       ".2f")} | Messy Entropy: {PyAstLean.pyFormatSpec entropy ".2f"}"]
       -- final check
-      if decide (wolves⦋-1⦌ > (0.1 : Rat)) then 
+      if decide (wolves⦋-1⦌ > (0.1 : Float)) then 
         let _ ← pyPrintIO [pyPrintArg "The ecosystem survived!"]
       else
         let _ ← pyPrintIO [pyPrintArg "The wolves went extinct."]) :
