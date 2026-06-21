@@ -39,6 +39,10 @@ def runTranslateTask (jsonTask : Json) (ctx : Core.Context) (env : Environment) 
   -- sites lower `float` to `ℚ` or `Float` accordingly.
   let mode := jsonTask.getObjValAs? String "numericMode" |>.toOption.getD "exact"
   PyAstLean.numericModeRef.set (if mode == "approx" then .approx else .exact)
+  -- Run-twin suffixing (`--mode both`): when emitting the runnable twin, `runSuffix` is `'rn` and
+  -- `userNames` lists the user's functions/classes whose references should also be suffixed.
+  PyAstLean.runSuffixRef.set (jsonTask.getObjValAs? String "runSuffix" |>.toOption.getD "")
+  PyAstLean.userNamesRef.set ((jsonTask.getObjValAs? (Array String) "userNames" |>.toOption.getD #[]).toList)
   let .ok json := jsonTask.getObjValAs? Json "ast"
     | return errorResponse "Invalid JSON: missing 'ast' field or it is not a JSON value"
   let code? ← getCodeIO json target.toName ctx env checkCode

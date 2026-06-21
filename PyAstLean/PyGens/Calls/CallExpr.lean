@@ -302,7 +302,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
 
         -- `ClassName.method(args)` (static/classmethod/unbound) -> `C.method args`, no receiver.
         if let some cls := (json.getObjValAs? String "_static_class").toOption then
-          let methodIdent : TSyntax `term := mkIdent (Name.mkStr cls.toName attr)
+          let methodIdent : TSyntax `term := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
           let build : Array (TSyntax `term) → PygenM (TSyntax `term) := fun resolved => do
             let mut t ← `($methodIdent $resolved*)
             for (kwName, kwValueJson) in keyWordsMap.toList do
@@ -322,7 +322,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
             throwError s!"Mutating method '{attr}' cannot be used as an expression under value \
               semantics; call it as a statement on its own line."
           let valCode ← getCode valueJson `term
-          let methodIdent : TSyntax `term := mkIdent (Name.mkStr cls.toName attr)
+          let methodIdent : TSyntax `term := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
           let allJsons := #[valueJson] ++ argsArray
           let allCodes := #[valCode] ++ argsCodes
           let build : Array (TSyntax `term) → PygenM (TSyntax `term) := fun resolved => do
@@ -396,12 +396,17 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                 if isMut then
                   throwError s!"Mutating method '{attr}' cannot be used as an expression under \
                     value semantics; call it as a statement on its own line."
-                funcIdent := mkIdent (Name.mkStr cls.toName attr)
+                funcIdent := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
             | none =>
                 throwError s!"Unsupported Python method '{attr}' encountered in Call node."
       else
         match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
         | .ok "Name", .ok "print" => do
+            -- `prove` (exact) semantics: `print` is a no-op (theorems, not output) — hoist IO args
+            -- (e.g. `input()`) for their side effect, then `pyPrintNoop` with no rendering.
+            if (← getNumericMode) == .exact then
+              return ← buildIOActionApplicationFromArgs argsArray argsCodes fun _ =>
+                `($(mkIdent `pyPrintNoop))
             let supportedKeywords := ["sep", "end"]
             for (kwName, _) in keyWordsMap.toList do
               unless supportedKeywords.contains kwName do
@@ -529,7 +534,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
             -- Prefer the py2lean dispatch stamp (`_class_ctor`); fall back to the local registry.
             match ← (do match (json.getObjValAs? String "_class_ctor").toOption with
                         | some c => pure (some c) | none => constructorClassOfName? funcName) with
-            | some cls => funcIdent := (mkIdent (Name.mkStr cls.toName "new") : TSyntax `term)
+            | some cls => funcIdent := (mkIdent (Name.mkStr (← suffixIfUserName cls).toName "new") : TSyntax `term)
             | none =>
             -- Variadic builtins that fold a binary runtime function over their args (e.g. `zip`)
             -- are handled generically from the `variadicFoldBuiltin?` registry — one handler for
@@ -545,7 +550,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
             else match ← builtinMappedName? funcName with
             | some mappedName => funcIdent := (mkIdent mappedName : TSyntax `term)
             | none =>
-                let mappedName ← leanName funcName.toName
+                let mappedName ← leanName (← suffixIfUserName funcName).toName
                 funcIdent := (mkIdent mappedName : TSyntax `term)
         | _, _ =>
             funcIdent ← getCode funcJson `term
@@ -602,7 +607,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
 
         -- `ClassName.method(args)` (static/classmethod/unbound) as a statement.
         if let some cls := (json.getObjValAs? String "_static_class").toOption then
-          let methodIdent : TSyntax `term := mkIdent (Name.mkStr cls.toName attr)
+          let methodIdent : TSyntax `term := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
           let build : Array (TSyntax `term) → PygenM (TSyntax `term) := fun resolved => do
             let mut t ← `($methodIdent $resolved*)
             for (kwName, kwValueJson) in keyWordsMap.toList do
@@ -623,7 +628,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
         -- here, taking precedence over the builtin-method special-cases. A mutator on a bare
         -- variable reassigns it (`obj := C.m obj args`); a getter is run/bound like any call.
         if let some cls := (json.getObjValAs? String "_receiver_class").toOption then
-          let methodIdent : TSyntax `term := mkIdent (Name.mkStr cls.toName attr)
+          let methodIdent : TSyntax `term := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
           if (json.getObjValAs? Bool "_is_mutator").toOption.getD false then
             if jsonNodeType? valueJson == some "Name" then
               let targetIdent ← getCode valueJson `ident
@@ -738,18 +743,24 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                 if isMut then
                   if jsonNodeType? valueJson == some "Name" then
                     let targetIdent ← getCode valueJson `ident
-                    let methodIdent := mkIdent (Name.mkStr cls.toName attr)
+                    let methodIdent := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
                     return ← `(doElem| $targetIdent:ident := $methodIdent $targetIdent $argsCodes*)
                   else
                     throwError s!"Mutating method '{attr}' on a non-variable receiver is not \
                       supported under value semantics."
                 else
-                  funcIdent := mkIdent (Name.mkStr cls.toName attr)
+                  funcIdent := mkIdent (Name.mkStr (← suffixIfUserName cls).toName attr)
             | none =>
                 throwError s!"Unsupported Python method '{attr}' encountered in Call node."
       else
         match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
         | .ok "Name", .ok "print" => do
+            if (← getNumericMode) == .exact then
+              -- `prove` no-op `print` (see the other print site): preserve `input()` side effects,
+              -- drop the rendering.
+              let t ← buildIOActionApplicationFromArgs argsArray argsCodes fun _ =>
+                `($(mkIdent `pyPrintNoop))
+              return ← `(doElem| let _ ← $t:term)
             let supportedKeywords := ["sep", "end"]
             for (kwName, _) in keyWordsMap.toList do
               unless supportedKeywords.contains kwName do
@@ -860,12 +871,12 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
         | .ok "Name", .ok funcName =>
             match ← (do match (json.getObjValAs? String "_class_ctor").toOption with
                         | some c => pure (some c) | none => constructorClassOfName? funcName) with
-            | some cls => funcIdent := (mkIdent (Name.mkStr cls.toName "new") : TSyntax `term)
+            | some cls => funcIdent := (mkIdent (Name.mkStr (← suffixIfUserName cls).toName "new") : TSyntax `term)
             | none =>
             match ← builtinMappedName? funcName with
             | some mappedName => funcIdent := (mkIdent mappedName : TSyntax `term)
             | none =>
-                let mappedName ← leanName funcName.toName
+                let mappedName ← leanName (← suffixIfUserName funcName).toName
                 funcIdent := (mkIdent mappedName : TSyntax `term)
         | _, _ =>
             funcIdent ← getCode funcJson `term

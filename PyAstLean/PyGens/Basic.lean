@@ -143,14 +143,18 @@ def nameSyntax : (kind : SyntaxNodeKind) → Json →
     | none =>
         let .ok id := json.getObjValAs? String "id" | throwError
           s!"Name node does not have an 'id' field or it is not a string: {json}"
-        return mkIdent id.toName
+        -- In a run-twin, a reference to a user function/class is suffixed (`bar` → `bar'rn`,
+        -- `CNN` → `CNN'rn`); locals and library names are left as-is.
+        return mkIdent (← suffixIfUserName id).toName
   | `ident, json => do
     match ← jsonLibraryMappedName? json with
     | some leanName => pure (mkIdent leanName)
     | none =>
         let .ok id := json.getObjValAs? String "id" | throwError
           s!"Name node does not have an 'id' field or it is not a string: {json}"
-        return mkIdent id.toName
+        -- In a run-twin, a reference to a user function/class is suffixed (`bar` → `bar'rn`,
+        -- `CNN` → `CNN'rn`); locals and library names are left as-is.
+        return mkIdent (← suffixIfUserName id).toName
   | _, _ => throwError s!"Unsupported syntax category for Name node"
 
 @[pygen "List"]

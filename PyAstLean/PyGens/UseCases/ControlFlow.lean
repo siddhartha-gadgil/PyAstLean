@@ -550,7 +550,10 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         for elem in bodyElems do
           let elemStx ← getCode elem `doElem
           bodyStxArray := appendDoElems bodyStxArray elemStx
-        let mainIdent := mkIdent `main
+        -- Run-twin (`--mode both`): the entry wrapper is emitted as `main'rn` (and its body call to
+        -- `main'` is suffixed to `main''rn` by the Name pygen), leaving the prove `main` as the file's
+        -- single Lean entry point.
+        let mainIdent := mkIdent (← withRunSuffix "main").toName
         -- A guard that calls into a real-valued (`ℝ`, exact mode) function makes the `main`
         -- wrapper depend on a `noncomputable` def, so it must itself be `noncomputable` (it
         -- still elaborates / compile-checks; it just can't be run — use `--approx` to run).

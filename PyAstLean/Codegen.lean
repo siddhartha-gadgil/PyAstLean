@@ -37,6 +37,27 @@ initialize realContextRef : IO.Ref Bool ← IO.mkRef false
 /-- Read whether we're lowering inside a real-valued (`ℝ`) function body. -/
 def getRealContext : IO Bool := realContextRef.get
 
+/-- When emitting the runnable "twin" of a declaration in `--mode both`, this is the suffix (`'rn`)
+appended to every top-level definition name AND to references to other user-defined functions/classes
+(listed in `userNamesRef`). Empty for the single-version `prove`/`run` modes. Lets one file carry the
+provable `foo` and the runnable `foo'rn` side by side. -/
+initialize runSuffixRef : IO.Ref String ← IO.mkRef ""
+
+/-- The names of the user's top-level functions/classes — references to these get `runSuffix` appended
+in a run-twin so `foo'rn` calls `bar'rn` / builds `CNN'rn`, not the `prove` `bar`/`CNN`. -/
+initialize userNamesRef : IO.Ref (List String) ← IO.mkRef []
+
+/-- The suffix to append to a top-level def name being emitted (empty unless in a run-twin). -/
+def getRunSuffix : IO String := runSuffixRef.get
+
+/-- Append the run-twin suffix to a name unconditionally (for the def being emitted). -/
+def withRunSuffix (name : String) : IO String := return name ++ (← getRunSuffix)
+
+/-- Append the run-twin suffix to a *reference* only when it names a user function/class (so locals
+and library names are untouched). -/
+def suffixIfUserName (name : String) : IO String := do
+  if (← userNamesRef.get).contains name then return name ++ (← getRunSuffix) else return name
+
 /-!
 ## Code generation from JSON data
 

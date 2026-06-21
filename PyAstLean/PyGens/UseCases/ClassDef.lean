@@ -177,8 +177,12 @@ def classDunderInstance? (className : String) (m : Json) : PygenM (Option (TSynt
 @[pygen "ClassDef"]
 def classDefSyntax : (kind : SyntaxNodeKind) → Json → PygenM (TSyntax kind)
   | `command, json => do
-      let .ok name := json.getObjValAs? String "name" | throwError
+      let .ok rawName := json.getObjValAs? String "name" | throwError
         s!"ClassDef node is missing a 'name': {json}"
+      -- Run-twin: the class is emitted as `CNN'rn`; its methods/constructor follow (`CNN'rn.new`,
+      -- `CNN'rn.forward`) since they are built from this name, and references to `CNN` are suffixed
+      -- by the Name pygen + the constructor/method call sites.
+      let name ← withRunSuffix rawName
       let nameId := mkIdent name.toName
       let .ok fields := json.getObjValAs? (Array Json) "fields" | throwError
         s!"ClassDef node is missing a 'fields' array: {json}"
@@ -225,20 +229,25 @@ def classDefSyntax : (kind : SyntaxNodeKind) → Json → PygenM (TSyntax kind)
       let structCmd ← match docStx?, baseId? with
         | some doc, some baseId =>
             `(command| $doc:docComment structure $nameId:ident extends $baseId:ident where
-                $[$fieldBinders]* deriving Inhabited, Repr)
+                $[$fieldBinders]* deriving Inhabited)
         | some doc, none =>
             `(command| $doc:docComment structure $nameId:ident where
-                $[$fieldBinders]* deriving Inhabited, Repr)
+                $[$fieldBinders]* deriving Inhabited)
         | none, some baseId =>
             `(command| structure $nameId:ident extends $baseId:ident where
-                $[$fieldBinders]* deriving Inhabited, Repr)
+                $[$fieldBinders]* deriving Inhabited)
         | none, none =>
             `(command| structure $nameId:ident where
-                $[$fieldBinders]* deriving Inhabited, Repr)
+                $[$fieldBinders]* deriving Inhabited)
 
       let mut members : Array (TSyntax `command) := #[structCmd]
+      -- A class with an `ℝ` field can't derive a computable `BEq`/`Repr` (`Real.decidableEq` is
+      -- noncomputable; `Real`'s only `Repr` is `unsafe`), and the `prove` version is never compared
+      -- or printed — so skip both for real-field classes. Otherwise derive them as usual.
       unless hasEq || hasRealField do
         members := members.push (← `(command| deriving instance BEq for $nameId:ident))
+      unless hasRealField do
+        members := members.push (← `(command| deriving instance Repr for $nameId:ident))
 
       -- Constructor (from `__init__`), operator/printable dunders, and the remaining methods.
       let mut hasInit := false

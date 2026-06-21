@@ -40,8 +40,13 @@ SUPPORTED_LIBRARY_IMPORTS = get_supported_libraries()
 TYPE_ONLY_IMPORTS = {"typing", "typing_extensions", "__future__"}
 
 # Numeric lowering mode sent to the Lean backend: "exact" → Python float becomes Lean ℚ
-# (provable + computable); "approx" → Float (fast, today's behavior). Set per `translate_to_lean`.
+# (provable + computable); "approx" → Float (fast, runnable). Set per backend send.
 _NUMERIC_MODE = "exact"
+# Run-twin suffix (`--mode both`): "'rn" while emitting the runnable twin of a declaration, "" for
+# the single-version modes. `_USER_NAMES` lists the user functions/classes whose references the
+# backend suffixes in a twin (so `foo'rn` calls `bar'rn`, builds `CNN'rn`).
+_RUN_SUFFIX = ""
+_USER_NAMES = []
 
 # Submodules of a supported library that act as nested namespaces (e.g. `scipy.special`). Their
 # members all flatten into the top-level library's registry, so importing the submodule (e.g.
@@ -1033,7 +1038,8 @@ class LeanBackendClient:
         """Fallback backend path that avoids the persistent server when it misbehaves."""
         json_task = json.dumps(
             {"task": "translate", "ast": ast_json, "target": target, "check": check,
-             "numericMode": _NUMERIC_MODE},
+             "numericMode": _NUMERIC_MODE, "runSuffix": _RUN_SUFFIX,
+             "userNames": _USER_NAMES},
             separators=(",", ":"),
         )
         cmd = ["lake", "exe", "py2lean", json_task, target]
@@ -1106,7 +1112,8 @@ class LeanBackendClient:
         assert self.proc.stdout is not None
         json_task = json.dumps(
             {"task": "translate", "ast": ast_json, "target": target, "check": check,
-             "numericMode": _NUMERIC_MODE},
+             "numericMode": _NUMERIC_MODE, "runSuffix": _RUN_SUFFIX,
+             "userNames": _USER_NAMES},
             separators=(",", ":"),
         )
         logger.debug("Sending request to Lean backend: target=%s check=%s", target, check)
@@ -1394,10 +1401,42 @@ def _backend_placeholder_command(stmt, idx):
     return f'def {ident} := pyUnsupported "{msg}"'
 
 
-def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, numeric_mode="exact"):
-    """Translate Python source to Lean via JSON IR and the Lean backend executable."""
-    global _NUMERIC_MODE
-    _NUMERIC_MODE = numeric_mode
+def _collect_user_names(body):
+    """The user's module-scope function/class names — references to these get the `'rn` suffix in a
+    run-twin (so `foo'rn` calls `bar'rn`, builds `CNN'rn`). NESTED functions (`def` inside `def`) are
+    emitted as local `let` bindings regenerated in each twin, so their names must NOT be suffixed."""
+    names = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            nt = node.get("node_type")
+            if nt in ("FunctionDef", "ClassDef"):
+                n = node.get("name")
+                if isinstance(n, str):
+                    names.add(n)
+                return  # a def/class boundary: its own body is a separate scope (nested = local)
+            if nt in ("AsyncFunctionDef", "Lambda"):
+                return
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for it in node:
+                walk(it)
+
+    for stmt in body:
+        walk(stmt)
+    return sorted(names)
+
+
+def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, mode="both"):
+    """Translate Python source to Lean via JSON IR and the Lean backend executable.
+
+    `mode` selects the numeric semantics: "prove" (exact ℚ/ℝ, provable), "run" (Float, runnable), or
+    "both" (default) — emit the provable version AND a runnable twin whose top-level defs/classes and
+    the entry point are suffixed `'rn`, adjacently."""
+    global _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES
+    _NUMERIC_MODE = "approx" if mode == "run" else "exact"
+    _RUN_SUFFIX, _USER_NAMES = "", []
     json_ir = translate_to_json(source_code, filepath, best_effort=best_effort)
     ast_json = json.loads(json_ir)
     _stamp_class_dispatch(ast_json)
@@ -1405,6 +1444,33 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
 
     if ast_json.get("node_type") == "Module":
         body = ast_json.get("body", [])
+        user_names = _collect_user_names(body)
+        code_key = f"lean_{target}"
+        single = "approx" if mode == "run" else "exact"
+
+        def node_passes(node):
+            """Emission passes for one top-level node: (numericMode, runSuffix, userNames). In `both`
+            mode only definitions/classes and the `__main__` guard get a runnable `'rn` twin (their
+            names are suffixed); top-level constants/`del`/statements emit once (an unsuffixed twin
+            would just redeclare the same global)."""
+            nt = node.get("node_type")
+            twinnable = nt in ("FunctionDef", "ClassDef", "Module") or (nt == "If" and node.get("is_main_guard"))
+            if mode == "both" and twinnable:
+                return [("exact", "", []), ("approx", "'rn", user_names)]
+            return [(single, "", [])]
+
+        def send_node(node):
+            """Send `node` once per pass; return the list of code strings, or None on failure."""
+            global _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES
+            codes = []
+            for nmode, suffix, unames in node_passes(node):
+                _NUMERIC_MODE, _RUN_SUFFIX, _USER_NAMES = nmode, suffix, unames
+                r = invoke_lean_backend(node, target, check=False, client=client)
+                if r.get("result") is False or code_key not in r:
+                    return None
+                codes.append(r[code_key])
+            return codes
+
         if target == "command":
             # Each part is (is_comment, text). Standalone comments attach to the next
             # part with a single newline so they read as leading comments, while real
@@ -1420,7 +1486,6 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                 if stmt.get("node_type") in {"Comment", "DocString"}:
                     code_parts.append((True, _direct_comment_code(stmt)))
                     continue
-                code_key = f"lean_{target}"
                 # Mutually-recursive functions can't be separate `def`s — send the whole group as a
                 # single `Module` so the backend emits one `mutual … end` block.
                 if stmt.get("node_type") == "FunctionDef":
@@ -1435,31 +1500,31 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                             and s.get("name") in group
                         ]
                         module_node = {"node_type": "Module", "body": members}
-                        result = invoke_lean_backend(module_node, target, check=False, client=client)
-                        if result.get("result") is False:
+                        codes = send_node(module_node)
+                        if codes is None:
                             if best_effort:
                                 logger.warning("best-effort: backend could not translate %s; replaced with pyUnsupported placeholder", name)
                                 code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
                                 backend_unsup += 1
                                 emitted_funcs.update(group)
                                 continue
-                            return result
-                        if code_key not in result:
-                            return {"result": False, "error": f"Missing '{code_key}' in backend response."}
-                        code_parts.append((False, result[code_key]))
+                            return {"result": False, "error": f"backend could not translate {name}"}
+                        for c in codes:
+                            code_parts.append((False, c))
                         emitted_funcs.update(group)
                         continue
-                result = invoke_lean_backend(stmt, target, check=False, client=client)
-                if result.get("result") is False:
+                codes = send_node(stmt)
+                if codes is None:
                     if best_effort:
                         logger.warning("best-effort: backend could not translate a %s; replaced with pyUnsupported placeholder", stmt.get("node_type"))
                         code_parts.append((False, _backend_placeholder_command(stmt, backend_unsup)))
                         backend_unsup += 1
                         continue
-                    return result
-                if code_key not in result:
-                    return {"result": False, "error": f"Missing '{code_key}' in backend response."}
-                code_parts.append((False, _inject_comments_into_lean(stmt, result[code_key])))
+                    return {"result": False, "error": f"backend could not translate {stmt.get('node_type')}"}
+                # Inline comment placeholders live inside each emitted version, so inject into the
+                # prove version AND every `'rn` twin.
+                for c in codes:
+                    code_parts.append((False, _inject_comments_into_lean(stmt, c)))
 
             body_code = _join_command_parts(code_parts)
             if imports_add:
@@ -1536,11 +1601,14 @@ def main(argv=None):
              "pyUnsupported(...) placeholders.",
     )
     parser.add_argument(
-        "--approx",
-        dest="approx",
-        action="store_true",
-        help="Lower Python float to Lean Float (fast, IEEE) instead of the default exact ℚ "
-             "(Rat). ℚ is computable AND provable; --approx is for speed / transcendentals.",
+        "--mode",
+        dest="mode",
+        choices=["prove", "run", "both"],
+        default="both",
+        help="Which numeric semantics to emit. 'prove': exact ℚ/ℝ (provable; transcendentals "
+             "noncomputable). 'run': Float (fast, runnable). 'both' (default): emit BOTH in one file "
+             "— the provable version under its name and a runnable twin suffixed 'rn "
+             "(e.g. `main'rn`, `sigmoid'rn`).",
     )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
@@ -1551,7 +1619,7 @@ def main(argv=None):
 
     source_code = Path(file_path).read_text(encoding="utf-8")
     result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
-                               numeric_mode=("approx" if args.approx else "exact"))
+                               mode=args.mode)
 
     if isinstance(result, dict):
         if result.get("result") is False:

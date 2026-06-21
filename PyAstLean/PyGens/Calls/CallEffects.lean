@@ -328,6 +328,19 @@ partial def hoistIOTerm (json : Json) : PygenM (Array (TSyntax `doElem) × TSynt
           let arg0 := resolvedArgs[0]!
           return (bindings, ← `($pyIntIdent $arg0))
       | .ok "Name", .ok "print" => do
+          -- `prove` (exact) semantics: `print` is a no-op (the prove version is for theorems, not
+          -- output, and a noncomputable `ℝ` has no printable form). Still hoist any IO-effect arg
+          -- (e.g. `input()`) so its side effect runs, then drop the rendering and emit `pyPrintNoop`.
+          if (← getNumericMode) == .exact then
+            let mut bindings : Array (TSyntax `doElem) := #[]
+            for argJson in argsArray do
+              if basicJsonUsesIOEffect argJson then
+                let (argBindings, _) ← hoistIOTerm argJson
+                bindings := bindings ++ argBindings
+            let binder := mkIdent (s!"__py_print{bindings.size}").toName
+            let noopTerm : TSyntax `term := mkIdent `pyPrintNoop
+            let finalBindings := bindings.push (← `(doElem| let $binder:ident ← $noopTerm:term))
+            return (finalBindings, binder)
           let supportedKeywords := ["sep", "end"]
           for (kwName, _) in keyWordsMap.toList do
             unless supportedKeywords.contains kwName do

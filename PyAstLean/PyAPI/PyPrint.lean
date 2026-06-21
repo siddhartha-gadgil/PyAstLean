@@ -87,17 +87,6 @@ fraction `n/d` — matching `print` output when `float` lowers to `ℚ` (exact m
 instance : PyPrintable Rat where
   pyStringify q := toString (Rat.toFloat q)
 
-/-- Printing a real number `ℝ` arises only in exact mode when a value flows from a transcendental
-(`math.exp`, `np.sqrt`, scipy `norm`, …) into a `print`. Such an `ℝ` is *noncomputable* — there is
-no algorithm to extract its digits — and Mathlib's own `Repr ℝ` is `unsafe`. These safe, computable
-placeholders let a program that prints an exact `ℝ` still **elaborate** (type-check); to actually
-evaluate/print the number, regenerate with `--approx` (which lowers `float` to `Float`). -/
-private def realPrintPlaceholder : String := "<ℝ: noncomputable in exact mode — use --approx to evaluate>"
-
-instance (priority := high) : ToString ℝ := ⟨fun _ => realPrintPlaceholder⟩
-instance (priority := high) : Repr ℝ := ⟨fun _ _ => realPrintPlaceholder⟩
-instance : PyPrintable ℝ where
-  pyStringify _ := realPrintPlaceholder
 
 /-- Python exceptions print with their existing `ToString` rendering. -/
 instance : PyPrintable PyException where
@@ -164,6 +153,13 @@ multi-value calls go through the same user-facing API:
 def pyPrintIO (parts : List PyPrintArg) (sep : String := " ") (ending : String := "\n") : IO Unit :=
   IO.print (pyPrintArgsRendered parts sep ending)
 
+/-- No-op `print` used by the `prove` (exact) semantics: that version exists to state and prove
+theorems, not to produce output (and a noncomputable `ℝ` has no printable form), so `print(...)`
+elides its rendered arguments. Any `input()` side effect in the arguments is still hoisted and run
+before this; only the rendering/output is dropped. The runnable `'rn` / `--mode run` twin keeps the
+real `pyPrintIO`. -/
+def pyPrintNoop : IO Unit := pure ()
+
 /--
 Pure compatibility surface mirroring `pyPrintIO`.
 
@@ -196,14 +192,14 @@ def pyFixedFloat (x : Float) (prec : Nat) : String :=
     if prec == 0 then toString intPart
     else
       let fracStr := toString fracPart
-      let pad := String.mk (List.replicate (prec - fracStr.length) '0')
+      let pad := String.ofList (List.replicate (prec - fracStr.length) '0')
       s!"{intPart}.{pad}{fracStr}"
   if neg && scaledNat != 0 then "-" ++ body else body
 
 /-- The precision (digits after `.`) requested by a format spec, defaulting to Python's 6. -/
 private def pyFmtPrecision (spec : String) : Nat :=
   match spec.toList.dropWhile (· != '.') with
-  | '.' :: rest => (String.mk (rest.takeWhile Char.isDigit)).toNat?.getD 6
+  | '.' :: rest => (String.ofList (rest.takeWhile Char.isDigit)).toNat?.getD 6
   | _ => 6
 
 /-- Apply a Python f-string format spec to a numeric value. Supports `.Nf` (fixed decimals); any

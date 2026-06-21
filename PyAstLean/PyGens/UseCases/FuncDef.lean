@@ -357,7 +357,10 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         -- pre-pass already renames `main` → `main'` whenever a `__main__` guard exists (so the guard
         -- owns the entry point); therefore any `FunctionDef` that still reaches here named `main`
         -- is a plain helper with no guard, and must yield the reserved name to stay compilable.
-        let name := if rawName == "main" then "main'" else rawName
+        let baseName := if rawName == "main" then "main'" else rawName
+        -- In a run-twin (`--mode both`) the emitted name gets the `'rn` suffix (`foo` → `foo'rn`);
+        -- `baseName` (unsuffixed) is still used to scan the JSON body for self-reference (recursion).
+        let name ← withRunSuffix baseName
         let nameIdent := mkIdent name.toName
         -- `_real_fn` (set by the Python per-variable pass) means the function produces or handles an
         -- `ℝ` value → it must be `noncomputable` in exact mode. This is now DECOUPLED from which
@@ -375,7 +378,7 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
               -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
               let nc := isReal || (← bodyNeedsNoncomputable bodyElems)
               -- take care of recursion function Type
-              if bodyElems.any (jsonReferencesName · name) then
+              if bodyElems.any (jsonReferencesName · baseName) then
                 let fullTy? ← match ← functionReturnTypeSyntax? json with
                   | some retTy => functionArrowTypeSyntax? argInfos retTy
                   | none => pure none
