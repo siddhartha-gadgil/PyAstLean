@@ -1,5 +1,6 @@
 import Lean
 import PyAstLeanTest.MiniRegex
+import PyAstLeanTest.Random
 
 open Lean
 open PyAstLeanTest.MiniRegex
