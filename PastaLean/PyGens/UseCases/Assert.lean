@@ -1,4 +1,5 @@
 import PastaLean.PyGens.Core.Utils
+import PastaLean.PyVerify.AssertTactic
 
 open Lean Meta Elab Term Qq Std
 
@@ -14,7 +15,7 @@ def assertSyntax : (kind : SyntaxNodeKind) → Json →
         let testTerm ← getCode testJson `term
         let hName := mkIdent (← freshName `ht)
         `(doElem | have $hName : ($testTerm = true) := by
-            sorry
+            taste?
          )
     | `command, json => do
         -- A top-level `assert` (outside any function) has no `do` block to host a `have`, so emit a
@@ -26,7 +27,7 @@ def assertSyntax : (kind : SyntaxNodeKind) → Json →
         let testTerm ← getCode testJson `term
         let hName := mkIdent (← freshName `assert_stmt)
         `(command| theorem $hName : ($testTerm = true) := by
-            sorry
+            taste?
           )
     | _, _ => throwError s!"Unsupported syntax category for Assert node"
 
