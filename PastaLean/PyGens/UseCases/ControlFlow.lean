@@ -380,7 +380,7 @@ def whileSyntax : (kind : SyntaxNodeKind) → Json →
     | `doElem, json => do
         let .ok test := json.getObjVal? "test" | throwError
           s!"While node does not have a 'test' field or it is not a JSON value: {json}"
-        let testStx ← truthyConditionTerm test (← getCode test `term)
+        let testStx ← truthyConditionTerm test (← withPropCondition true (getCode test `term))
         let .ok bodyElems := json.getObjValAs? (Array Json) "body" | throwError
           s!"While node does not have a 'body' field or it is not a JSON array: {json}"
         let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
@@ -484,7 +484,9 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
           s!"If node does not have a 'body' field or it is not a JSON array: {json}"
         let .ok orelseElems := json.getObjValAs? (Array Json) "orelse" | throwError
           s!"If node does not have an 'orelse' field or it is not a JSON array: {json}"
-        let testStx ← truthyConditionTerm testJson (← getCode testJson `term)
+        -- Lower the test in condition position so a direct comparison may be a provable `Prop`
+        -- (paired with the `if h : …` hypothesis below); `and`/`or`/`not` reset this to `Bool`.
+        let testStx ← truthyConditionTerm testJson (← withPropCondition true (getCode testJson `term))
         -- Hoist names that are first bound inside a branch but escape the `if` (read after it).
         -- Each branch lowers to its own `do` block, so a `let mut` there is invisible to the
         -- other branch and to following statements. Pre-declaring `let mut name := default`
@@ -500,6 +502,13 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
             let nmIdent := mkIdent nmName
             hoistDecls := hoistDecls.push (← `(doElem| let mut $nmIdent:ident := default))
             addVar nmName
+        -- Bind the branch condition as a hypothesis (`if h : cond then …`), so proofs about the
+        -- generated code have the test available: `h` in the then-branch, `¬h` in the else.
+        -- Reserve the name *before* lowering the branch bodies: `freshName` registers it, so a
+        -- nested `if` inside the body gets `h_1` (not another `h`) and the outer hypothesis stays
+        -- visible inside the nested branch instead of being shadowed. (`withFixedVariables` below
+        -- restores per-branch scope, which is why the reservation must happen out here first.)
+        let hName := mkIdent (← freshName `h)
         -- Scope each branch's variable declarations to that branch: a name first bound in the
         -- `then` branch must not leak into the `else` branch's scope (which would make the `else`
         -- assignment a reassignment of a `let mut` it cannot see). Names that escape the whole
@@ -517,13 +526,13 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         let ifStx ←
           if orelseStxArray.isEmpty then
             let noop ← noopDoElemSyntax
-            `(doElem| if $testStx then
+            `(doElem| if $hName : $testStx then
                 $[$bodyStxArray:doElem]*
               else
                 $noop:doElem
             )
           else
-            `(doElem| if $testStx then
+            `(doElem| if $hName : $testStx then
                 $[$bodyStxArray:doElem]*
               else
                 $[$orelseStxArray:doElem]*)

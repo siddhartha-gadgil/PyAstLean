@@ -4,8 +4,8 @@ import Libraries
 open PastaLean
 open Libraries
 
-
 set_option linter.all false
+
 noncomputable def sigmoid := fun (x : Real) ↦ (1.0 : Rat) /ₚ ((1.0 : Rat) +ₚ Libraries.math.pyMathExpR (-x))
 
 def sigmoid'rn := fun (x : Float) ↦ (1.0 : Float) /ₚ ((1.0 : Float) +ₚ Libraries.math.pyMathExp (-x))
@@ -34,8 +34,8 @@ noncomputable def mean_squared_error := fun (xs : List (List Rat)) ↦ fun (ys :
       for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut diff := predict xs⦋i⦌ w1 b1 w2 b2 -ₚ ys⦋i⦌
         total := total +ₚ diff *ₚ diff
-      let __py_ret := total /ₚ PastaLean.pyLen xs
-      return __py_ret)
+      let __py_ret_1 := total /ₚ PastaLean.pyLen xs
+      return __py_ret_1)
 
 def mean_squared_error'rn := fun (xs : List (List Float)) ↦ fun (ys : List Float) ↦ fun (w1 : List (List Float)) ↦
   fun (b1 : List Float) ↦ fun (w2 : List (List Float)) ↦ fun (b2 : List Float) ↦
@@ -45,8 +45,8 @@ def mean_squared_error'rn := fun (xs : List (List Float)) ↦ fun (ys : List Flo
       for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut diff := predict'rn xs⦋i⦌ w1 b1 w2 b2 -ₚ ys⦋i⦌
         total := total +ₚ diff *ₚ diff
-      let __py_ret := total /ₚ PastaLean.pyLen xs
-      return __py_ret)
+      let __py_ret_1 := total /ₚ PastaLean.pyLen xs
+      return __py_ret_1)
 
 noncomputable def main' :=
   ((do
@@ -62,8 +62,8 @@ noncomputable def main' :=
       let mut b2 := [(0.3 : Real)]
       let mut lr := (0.5 : Rat)
       let mut epochs := (4000 : Int)
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
+      let _ ← pyPrintNoop [pyPrintArg "=== Training a neural net on XOR (NumPy + math) ==="]
+      let _ ← pyPrintNoop [pyPrintArg s! "initial loss: {mean_squared_error xs ys w1 b1 w2 b2}"]
       for epoch in (PastaLean.pyRange epochs)do
         for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
           let mut x := xs⦋i⦌
@@ -91,15 +91,16 @@ noncomputable def main' :=
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
-          let _ ← pyPrintNoop
+        if h_1 : (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) = (0 : Int) then 
+          let _ ←
+            pyPrintNoop [pyPrintArg s!"epoch {(epoch +ₚ (1 : Int))}: loss = {mean_squared_error xs ys w1 b1 w2 b2}"]
         else
           let _ := ()
-      let _ ← pyPrintNoop
+      let _ ← pyPrintNoop [pyPrintArg "learned predictions:"]
       for i in (PastaLean.pyRange (PastaLean.pyLen xs))do
         let mut p := predict xs⦋i⦌ w1 b1 w2 b2
         let mut label := if decide (p > (0.5 : Real)) then (1 : Int) else (0 : Int)
-        let _ ← pyPrintNoop) :
+        let _ ← pyPrintNoop [pyPrintArg s! "  {xs⦋i⦌} -> {p }  (class {label }, target {PastaLean.pyInt ys⦋i⦌})"]) :
     IO _)
 
 def main''rn :=
@@ -146,7 +147,7 @@ def main''rn :=
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
+        if h_1 : (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then 
           let _ ←
             pyPrintIO [pyPrintArg s!"epoch {(epoch +ₚ (1 : Int))}: loss = {mean_squared_error'rn xs ys w1 b1 w2 b2}"]
         else

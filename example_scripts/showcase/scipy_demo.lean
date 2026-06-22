@@ -4,8 +4,8 @@ import Libraries
 open PastaLean
 open Libraries
 
-
 set_option linter.all false
+
 /-
 A small numeric-toolkit showcase: `typing` annotations + a `scipy` subset, all transpiled
 to Lean 4 and backed only by Mathlib (computable Float implementations).
@@ -17,8 +17,8 @@ def variance := fun (xs : List Rat) ↦
       let mut total := (0.0 : Rat)
       for x in (PastaLean.pyIter xs)do
         total := total +ₚ (x -ₚ m) *ₚ (x -ₚ m)
-      let __py_ret := total /ₚ PastaLean.pyLen xs
-      return __py_ret)
+      let __py_ret_1 := total /ₚ PastaLean.pyLen xs
+      return __py_ret_1)
 
 def variance'rn := fun (xs : List Float) ↦
   Id.run
@@ -27,30 +27,31 @@ def variance'rn := fun (xs : List Float) ↦
       let mut total := (0.0 : Float)
       for x in (PastaLean.pyIter xs)do
         total := total +ₚ (x -ₚ m) *ₚ (x -ₚ m)
-      let __py_ret := total /ₚ PastaLean.pyLen xs
-      return __py_ret)
+      let __py_ret_1 := total /ₚ PastaLean.pyLen xs
+      return __py_ret_1)
 
 noncomputable def main' :=
   ((do
       let mut data :=
         [(2.0 : Rat), (4.0 : Rat), (4.0 : Rat), (4.0 : Rat), (5.0 : Rat), (5.0 : Rat), (7.0 : Rat), (9.0 : Rat)]
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop
+      let _ ← pyPrintNoop [pyPrintArg "=== scipy.special ==="]
+      let _ ← pyPrintNoop [pyPrintArg "5!        =", pyPrintArg (Libraries.scipy.pyScipyFactorial (5 : Int))]
+      let _ ← pyPrintNoop [pyPrintArg "C(8,3)    =", pyPrintArg (Libraries.scipy.pyScipyComb (8 : Int) (3 : Int))]
+      let _ ← pyPrintNoop [pyPrintArg "gamma(6)  =", pyPrintArg (Libraries.scipy.pyScipyGammaR (6.0 : Rat))]
+      let _ ← pyPrintNoop [pyPrintArg "erf(1)    =", pyPrintArg (Libraries.scipy.pyScipyErf (1.0 : Rat))]
+      let _ ← pyPrintNoop [pyPrintArg "=== scipy.constants ==="]
+      let _ ← pyPrintNoop [pyPrintArg "pi        =", pyPrintArg Libraries.scipy.pyScipyPiR]
+      let _ ← pyPrintNoop [pyPrintArg "golden    =", pyPrintArg Libraries.scipy.pyScipyGolden]
+      let _ ← pyPrintNoop [pyPrintArg "=== scipy.stats ==="]
+      let _ ← pyPrintNoop [pyPrintArg "mean      =", pyPrintArg (Libraries.scipy.pyScipyTmean data)]
+      let _ ← pyPrintNoop [pyPrintArg "gmean     =", pyPrintArg (Libraries.scipy.pyScipyGmeanR data)]
+      let _ ← pyPrintNoop [pyPrintArg "hmean     =", pyPrintArg (Libraries.scipy.pyScipyHmean data)]
+      let _ ← pyPrintNoop [pyPrintArg "variance  =", pyPrintArg (variance data)]
+      let _ ← pyPrintNoop [pyPrintArg "=== scipy.linalg ==="]
       let mut matrix := [[(4.0 : Rat), (3.0 : Rat)], [(6.0 : Rat), (3.0 : Rat)]]
-      let _ ← pyPrintNoop
-      let _ ← pyPrintNoop) :
+      let _ ← pyPrintNoop [pyPrintArg "det       =", pyPrintArg (Libraries.scipy.pyScipyDet matrix)]
+      let _ ←
+        pyPrintNoop [pyPrintArg "norm[3,4] =", pyPrintArg (Libraries.scipy.pyScipyNormR [(3.0 : Rat), (4.0 : Rat)])]) :
     IO _)
 
 def main''rn :=

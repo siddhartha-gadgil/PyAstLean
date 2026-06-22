@@ -154,11 +154,25 @@ def pyPrintIO (parts : List PyPrintArg) (sep : String := " ") (ending : String :
   IO.print (pyPrintArgsRendered parts sep ending)
 
 /-- No-op `print` used by the `prove` (exact) semantics: that version exists to state and prove
-theorems, not to produce output (and a noncomputable `ℝ` has no printable form), so `print(...)`
-elides its rendered arguments. Any `input()` side effect in the arguments is still hoisted and run
-before this; only the rendering/output is dropped. The runnable `'rn` / `--mode run` twin keeps the
-real `pyPrintIO`. -/
-def pyPrintNoop : IO Unit := pure ()
+theorems, not to produce output. It takes the SAME arguments as `pyPrintIO` — so the generated code
+keeps the full `print(...)` line, readable and type-checked — but discards them and produces no
+output (a noncomputable `ℝ` has no real printable form; see the placeholder `PyPrintable ℝ` below).
+Any `input()` side effect in the arguments is still hoisted and run before this; only the output is
+dropped. The runnable `'rn` / `--mode run` twin keeps the real `pyPrintIO`. -/
+def pyPrintNoop (_parts : List PyPrintArg) (_sep : String := " ") (_ending : String := "\n") :
+    IO Unit := pure ()
+
+/-- Placeholder renderers for `ℝ`, so a `prove`-mode `print(...)` line that embeds a real value can
+still be *written* and type-checked — via `pyPrintArg` (`PyPrintable`), string interpolation `s!"…
+{realExpr}"` (`ToString`), or a format spec `pyFormatSpec realExpr ".2f"` (`PyFmtNum`). None of these
+is ever actually rendered: only `pyPrintNoop` consumes the real arguments and it discards them, so
+the placeholder content (`{ℝ}` / `0.0`) is irrelevant — the *expression* stays visible in the source
+line regardless. `ℝ`'s true string form is noncomputable; these exist only to keep the line. -/
+instance : PyPrintable ℝ where
+  pyStringify _ := "{ℝ}"
+
+instance : ToString ℝ where
+  toString _ := "{ℝ}"
 
 /--
 Pure compatibility surface mirroring `pyPrintIO`.
@@ -180,6 +194,9 @@ instance : PyFmtNum Float := ⟨id⟩
 instance : PyFmtNum Nat := ⟨Float.ofNat⟩
 instance : PyFmtNum Int := ⟨fun n => if n ≥ 0 then Float.ofNat n.toNat else - Float.ofNat (-n).toNat⟩
 instance : PyFmtNum Rat := ⟨Rat.toFloat⟩
+-- Placeholder for `ℝ`: lets a `prove`-mode `print(f"{realExpr:.2f}")` line keep its format spec.
+-- Never rendered (only `pyPrintNoop` consumes it, discarding), so the `0.0` stand-in is irrelevant.
+instance : PyFmtNum ℝ := ⟨fun _ => 0.0⟩
 
 /-- Format a `Float` with exactly `prec` digits after the decimal point (Python `:.Nf`). -/
 def pyFixedFloat (x : Float) (prec : Nat) : String :=

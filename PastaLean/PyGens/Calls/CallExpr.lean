@@ -402,21 +402,20 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
       else
         match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
         | .ok "Name", .ok "print" => do
-            -- `prove` (exact) semantics: `print` is a no-op (theorems, not output) — hoist IO args
-            -- (e.g. `input()`) for their side effect, then `pyPrintNoop` with no rendering.
-            if (← getNumericMode) == .exact then
-              return ← buildIOActionApplicationFromArgs argsArray argsCodes fun _ =>
-                `($(mkIdent `pyPrintNoop))
             let supportedKeywords := ["sep", "end"]
             for (kwName, _) in keyWordsMap.toList do
               unless supportedKeywords.contains kwName do
                 throwError s!"print() keyword argument '{kwName}' is not supported yet."
+            -- In `prove` (exact) mode `print` is a no-op (theorems, not output), but we still emit
+            -- the full rendered line so it stays visible and type-checked — `pyPrintNoop` takes the
+            -- same arguments as `pyPrintIO` and discards them. IO-effect args (`input()`) are still
+            -- hoisted and run by `buildIOActionApplicationFromArgs` either way.
+            let printFn := mkIdent (if (← getNumericMode) == .exact then `pyPrintNoop else `pyPrintIO)
             return ← buildIOActionApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
-              let pyPrintIOIdent := mkIdent `pyPrintIO
               let printArgs ← buildPrintArgsList argsArray resolvedArgs
               match keyWordsMap.get? "sep", keyWordsMap.get? "end" with
               | none, none =>
-                  `($pyPrintIOIdent $printArgs)
+                  `($printFn $printArgs)
               | _, _ =>
                   let sepCode ← match keyWordsMap.get? "sep" with
                     | some sepJson => getCode sepJson `term
@@ -424,7 +423,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                   let endCode ← match keyWordsMap.get? "end" with
                     | some endJson => getCode endJson `term
                     | none => `("\n")
-                  `($pyPrintIOIdent $printArgs $sepCode $endCode)
+                  `($printFn $printArgs $sepCode $endCode)
         | .ok "Name", .ok "input" => do
             unless keyWordsMap.isEmpty do
               throwError "input() keyword arguments are not supported yet."
@@ -755,22 +754,18 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
       else
         match funcJson.getObjValAs? String "node_type", funcJson.getObjValAs? String "id" with
         | .ok "Name", .ok "print" => do
-            if (← getNumericMode) == .exact then
-              -- `prove` no-op `print` (see the other print site): preserve `input()` side effects,
-              -- drop the rendering.
-              let t ← buildIOActionApplicationFromArgs argsArray argsCodes fun _ =>
-                `($(mkIdent `pyPrintNoop))
-              return ← `(doElem| let _ ← $t:term)
             let supportedKeywords := ["sep", "end"]
             for (kwName, _) in keyWordsMap.toList do
               unless supportedKeywords.contains kwName do
                 throwError s!"print() keyword argument '{kwName}' is not supported yet."
+            -- `prove` mode swaps in `pyPrintNoop` (same args as `pyPrintIO`, discarded — the line
+            -- stays visible); see the other print site. IO-effect args are hoisted either way.
+            let printFn := mkIdent (if (← getNumericMode) == .exact then `pyPrintNoop else `pyPrintIO)
             let t ← buildIOActionApplicationFromArgs argsArray argsCodes fun resolvedArgs => do
-              let pyPrintIOIdent := mkIdent `pyPrintIO
               let printArgs ← buildPrintArgsList argsArray resolvedArgs
               match keyWordsMap.get? "sep", keyWordsMap.get? "end" with
               | none, none =>
-                  `($pyPrintIOIdent $printArgs)
+                  `($printFn $printArgs)
               | _, _ =>
                   let sepCode ← match keyWordsMap.get? "sep" with
                     | some sepJson => getCode sepJson `term
@@ -778,7 +773,7 @@ def callSyntax : (kind : SyntaxNodeKind) → Json →
                   let endCode ← match keyWordsMap.get? "end" with
                     | some endJson => getCode endJson `term
                     | none => `("\n")
-                  `($pyPrintIOIdent $printArgs $sepCode $endCode)
+                  `($printFn $printArgs $sepCode $endCode)
             return ← `(doElem| let _ ← $t:term)
         | .ok "Name", .ok "input" => do
             unless keyWordsMap.isEmpty do

@@ -1,4 +1,4 @@
-import PastaLean.PyGens.SpecialCalls.Functools
+import PastaLean.PyGens.Calls.SpecialCalls.Functools
 
 open Lean Meta Elab Term Qq Std
 

@@ -4,8 +4,8 @@ import Libraries
 open PastaLean
 open Libraries
 
-
 set_option linter.all false
+
 -- --- PURE MATH (Tier 0, provable) ---
 -- Exact mode lowers these to ℚ (rational, computable AND provable); calc_entropy uses
 -- math.log so it is ℝ/noncomputable but still provable. The runnable simulation (odeint,

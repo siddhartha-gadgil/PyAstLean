@@ -1538,9 +1538,9 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "",
                     "open PastaLean",
                     "open Libraries",
-                    "\n",
+                    "",
                     "set_option linter.all false" # shut up warnings which annoyingly popup in output
-                    "\n",
+                    "\n\n",
                 ]
                 full_code = "\n".join(preamble_lines) + body_code
             else:

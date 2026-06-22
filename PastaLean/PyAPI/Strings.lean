@@ -303,11 +303,11 @@ theorem pyUpper_idempotent (s : String) : pyStringUpper (pyStringUpper s) = pySt
 
 theorem pyLower_length_invariant (s : String) : (pyStringLower s).length = s.length := by
   unfold pyStringLower
-  simp
+  grind only [String.length_eq_list_length, = List.length_map, String.length_toList]
 
 theorem pyUpper_length_invariant (s : String) : (pyStringUpper s).length = s.length := by
   unfold pyStringUpper
-  simp
+  grind only [String.length_eq_list_length, = List.length_map, String.length_toList]
 
 theorem pyFind_eq_pyIndex (s sub : String) : pyStringFind s sub ≠ -1 → pyStringFind s sub = pyStringIndex s sub := by
   intro h

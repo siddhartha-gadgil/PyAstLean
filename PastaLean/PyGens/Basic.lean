@@ -370,20 +370,24 @@ def compareApplyTerm (op : String) (leftJson : Json) (leftCode rightCode : TSynt
   if (op == "is" || op == "isnot") && (rightJson.any isNoneConstantJson) then
     if op == "is" then return ← `($(mkIdent ``Option.isNone) $leftCode)
     else return ← `($(mkIdent ``Option.isSome) $leftCode)
+  -- In a *condition position* (`prop` — the direct test of an `if`/`while`, see `withPropCondition`)
+  -- a comparison lowers to a provable `Prop`, paired with the `if h : …` hypothesis: ordering →
+  -- `a < b` (decidable for every numeric type, so it works in any mode), equality → `a = b` / `a ≠ b`
+  -- but ONLY in exact mode (ℚ/ℤ/ℝ have `DecidableEq`; `Float` does NOT, so it keeps `==`).
+  -- In a *value position* (`!prop` — a comprehension element, an `and`/`or` operand, an `any`/`all`
+  -- generator) the result must be a `Bool`: ordering goes through `decide`, equality through `==`.
+  -- (`Prop` has no `Bool`/`PyBool` instance, so it cannot be a plain value.)
+  let prop ← getPropCondition
+  let exact ← numericModeIsExact
   match op with
-  | "eq" => `($leftCode == $rightCode)
-  | "ne" => `($leftCode != $rightCode)
-  | "is" => `($leftCode == $rightCode)
-  | "isnot" => `($leftCode != $rightCode)
-  -- Order comparisons go through `decide` so the result is a `Bool`, matching Python (where a
-  -- comparison is a usable `bool` value). Lean's `<`/`>`/… are `Prop`-valued, which only works
-  -- where the surrounding context forces `Bool` (an `if` condition); as a plain value — a list
-  -- comprehension element `[x > 0 for …]`, a `sum`/`any`/`all` generator, `a < b and c < d` —
-  -- the `Prop` would have no `Bool`/`PyBool` instance. (`==`/`!=`/`is` are already `Bool`.)
-  | "lt" => `(decide ($leftCode < $rightCode))
-  | "le" => `(decide ($leftCode <= $rightCode))
-  | "gt" => `(decide ($leftCode > $rightCode))
-  | "ge" => `(decide ($leftCode >= $rightCode))
+  | "eq" | "is" =>
+      if prop && exact then `($leftCode = $rightCode) else `($leftCode == $rightCode)
+  | "ne" | "isnot" =>
+      if prop && exact then `($leftCode ≠ $rightCode) else `($leftCode != $rightCode)
+  | "lt" => if prop then `($leftCode < $rightCode) else `(decide ($leftCode < $rightCode))
+  | "gt" => if prop then `($leftCode > $rightCode) else `(decide ($leftCode > $rightCode))
+  | "le" => if prop then `($leftCode <= $rightCode) else `(decide ($leftCode <= $rightCode))
+  | "ge" => if prop then `($leftCode >= $rightCode) else `(decide ($leftCode >= $rightCode))
   | "in" =>
       if isStringyJson leftJson then
         `($(mkIdent ``PastaLean.pyStrContainsSubstr) $rightCode $leftCode)
@@ -430,7 +434,8 @@ def unaryOpSyntax : (kind : SyntaxNodeKind) → Json →
       s!"UnaryOp node does not have an 'op' field or it is not a string: {json}"
     let .ok operandJson := json.getObjValAs? Json "operand" | throwError
       s!"UnaryOp node does not have an 'operand' field or it is not a JSON value: {json}"
-    let operandCode ← getCode operandJson `term
+    -- `not` is `!` (Bool), so its operand must be `Bool` even as an `if` test (`if not (a == b)`).
+    let operandCode ← withPropCondition false (getCode operandJson `term)
     unaryOpApplyTerm op operandCode
   | _, _ => throwError s!"Unsupported syntax category for UnaryOp node"
 
@@ -442,8 +447,10 @@ def boolOpSyntax : (kind : SyntaxNodeKind) → Json →
       s!"BoolOp node does not have an 'op' field or it is not a string: {json}"
     let .ok valuesJson := json.getObjValAs? Json "values" | throwError
       s!"BoolOp node does not have a 'values' field or it is not a JSON value: {json}"
+    -- `&&`/`||` need `Bool` operands, so lower them in value (non-`Prop`) position even when this
+    -- `BoolOp` is itself an `if`/`while` test: `if a < b and c < d` → `decide (a<b) && decide (c<d)`.
     let valuesCodes ← match valuesJson with
-      | .arr arr => arr.mapM (fun valueJson => getCode valueJson `term)
+      | .arr arr => arr.mapM (fun valueJson => withPropCondition false (getCode valueJson `term))
       | _ => throwError s!"BoolOp node 'values' field is not an array: {valuesJson}"
     -- let valuesCodes := valuesCodes.toList
     let l := valuesCodes.toList.length
