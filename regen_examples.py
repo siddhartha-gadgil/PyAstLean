@@ -4,7 +4,7 @@
 Groups and what happens to each:
   - showcase  (example_scripts/showcase)              -> .lean written IN PLACE next to the .py
   - Random    (PastaLeanTest/Random)                  -> .lean written IN PLACE next to the .py
-  - General   (PastaLeanTest/PyAstLeanCheck/General)  -> compile-checked only (temp file, no write)
+  - General   (PastaLeanTest/PastaLeanCheck/General)  -> compile-checked only (temp file, no write)
 
 For each .py: run the transpiler (`src/py2lean.py --target command --mode both`), then type-check
 the generated Lean with `lake env lean`. Prints OK / CONVERT_FAIL / COMPILE_FAIL per file and a
@@ -29,7 +29,7 @@ PY2LEAN = REPO / "src/py2lean.py"
 GROUPS: list[tuple[str, Path, bool]] = [
     ("showcase", REPO / "example_scripts/showcase", True),
     ("Random", REPO / "PastaLeanTest/Random", True),
-    ("General", REPO / "PastaLeanTest/PyAstLeanCheck/General", False),
+    ("General", REPO / "PastaLeanTest/PastaLeanCheck/General", False),
 ]
 
 # Helper scripts that are NOT transpiler inputs (they drive/figure showcases, not programs to port).

@@ -1196,7 +1196,15 @@ class ASTToJsonLeanVisitorBase:
             "ifs": [self.visit(if_cond) for if_cond in node.ifs],
             "is_async": node.is_async
         }
-    
+
+        
+    def visit_Assert(self, node):
+        """Translates ast.Assert to a JSON IR node."""
+        return {
+            "node_type": "Assert",
+            "test": self.visit(node.test),
+            "msg": None if node.msg is None else self.visit(node.msg),
+        }
 
 
 if __name__ == "__main__":

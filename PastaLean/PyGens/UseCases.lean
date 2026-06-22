@@ -1,3 +1,4 @@
+import PastaLean.PyGens.UseCases.Assert
 import PastaLean.PyGens.UseCases.ClassDef
 import PastaLean.PyGens.UseCases.Comments
 import PastaLean.PyGens.UseCases.ControlFlow

@@ -40,7 +40,7 @@ def appendDoElems (elems : Array (TSyntax `doElem)) (elem : TSyntax `doElem) :
     elems.push elem
 
 /-- Pick a fresh local name for generated bindings. -/
-partial def freshName (base : Name) (idx : Nat := 0) : PygenM Name := do
+partial def freshName (base : Name) (idx : Nat := 1) : PygenM Name := do
   let candidate :=
     if idx == 0 then base else base.appendIndexAfter idx
   if ← hasVar candidate then

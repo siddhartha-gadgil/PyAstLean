@@ -6,7 +6,7 @@ open Libraries
 
 
 set_option linter.all false
-noncomputable def euclidean_distance := fun p1 ↦ fun p2 ↦
+noncomputable def euclidean_distance := fun (p1 : List Int) ↦ fun (p2 : List Int) ↦
   ((do
       if h : PastaLean.pyLen p1 ≠ PastaLean.pyLen p2 then 
         throw
@@ -24,25 +24,23 @@ noncomputable def euclidean_distance := fun p1 ↦ fun p2 ↦
       return __py_ret) :
     PastaLean.PyExcept _)
 
-def euclidean_distance'rn := fun p1 ↦ fun p2 ↦
-  ((do
-      if h : PastaLean.pyLen p1 != PastaLean.pyLen p2 then 
-        throw
-            (PastaLean.PyException.Raise "ValueError"
-              (ToString.toString "Points must have the same number of dimensions"))
-      else
-        let _ := ()
-      -- Using zip, list comprehension, and math.pow
-      let mut sq_diffs :=
-        (PastaLean.pyIter (PastaLean.pyZip p1 p2)).map fun _pair =>
-          let a := Prod.fst _pair;
-          let b := Prod.snd _pair;
-          Libraries.math.pyMathPow (a -ₚ b) (2 : Int)
-      let __py_ret := Libraries.math.pyMathSqrt (PastaLean.pySum sq_diffs)
-      return __py_ret) :
-    PastaLean.PyExcept _)
+def euclidean_distance'rn : List Int → List Int → PastaLean.PyExcept Float := fun (p1 : List Int) ↦
+  fun (p2 : List Int) ↦ do
+  if h : PastaLean.pyLen p1 != PastaLean.pyLen p2 then 
+    throw
+        (PastaLean.PyException.Raise "ValueError" (ToString.toString "Points must have the same number of dimensions"))
+  else
+    let _ := ()
+  -- Using zip, list comprehension, and math.pow
+  let mut sq_diffs :=
+    (PastaLean.pyIter (PastaLean.pyZip p1 p2)).map fun _pair =>
+      let a := Prod.fst _pair;
+      let b := Prod.snd _pair;
+      Libraries.math.pyMathPow (a -ₚ b) (2 : Int)
+  let __py_ret := Libraries.math.pyMathSqrt (PastaLean.pySum sq_diffs)
+  return __py_ret
 
-noncomputable def find_nearest_neighbor := fun target ↦ fun dataset ↦
+noncomputable def find_nearest_neighbor := fun (target : List Int) ↦ fun (dataset : List (List Int)) ↦
   ((do
       try
         let __py_try_val ←
@@ -76,7 +74,7 @@ noncomputable def find_nearest_neighbor := fun target ↦ fun dataset ↦
           throw caught) :
     PastaLean.PyExcept _)
 
-def find_nearest_neighbor'rn := fun target ↦ fun dataset ↦
+def find_nearest_neighbor'rn := fun (target : List Int) ↦ fun (dataset : List (List Int)) ↦
   ((do
       try
         let __py_try_val ←

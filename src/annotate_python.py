@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any as TypingAny
 
@@ -1402,10 +1403,11 @@ def annotate_file(file_path: str, write_back: bool = True) -> str:
         original_src: str = f.read()
     if not HAS_LIBCST:
         return original_src
-    temp_dir: Path = Path("temp_stubs")
+    # Unique per-invocation stub dir (NOT a fixed "temp_stubs"): several `py2lean` processes can run
+    # concurrently (e.g. regen_examples.py --jobs N), and a shared dir makes them clobber each other's
+    # pyrefly stubs — dropping inferred param types and producing different output run-to-run.
+    temp_dir: Path = Path(tempfile.mkdtemp(prefix="pastalean_stubs_"))
     try:
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
         python_bin: Path = Path(sys.executable).parent
         pyrefly: str = str(python_bin / "pyrefly") if (python_bin / "pyrefly").exists() else "pyrefly"
         pyrefly_ok: bool = False
