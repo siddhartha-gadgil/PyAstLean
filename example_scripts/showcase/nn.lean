@@ -91,7 +91,7 @@ noncomputable def main' :=
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
+        if h : (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) = (0 : Int) then 
           let _ ← pyPrintNoop
         else
           let _ := ()
@@ -146,7 +146,7 @@ def main''rn :=
               [w1⦋(1 : Int)⦌⦋(0 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(0 : Int)⦌,
                 w1⦋(1 : Int)⦌⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1 *ₚ x⦋(1 : Int)⦌]
           b1 := [b1⦋(0 : Int)⦌ -ₚ lr *ₚ d_h0, b1⦋(1 : Int)⦌ -ₚ lr *ₚ d_h1]
-        if (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then
+        if h : (epoch +ₚ (1 : Int)) %ₚ (1000 : Int) == (0 : Int) then 
           let _ ←
             pyPrintIO [pyPrintArg s!"epoch {(epoch +ₚ (1 : Int))}: loss = {mean_squared_error'rn xs ys w1 b1 w2 b2}"]
         else

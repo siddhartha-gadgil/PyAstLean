@@ -25,7 +25,7 @@ def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List R
                 return result)
         return __py_try_val
       catch caught =>
-        if (caught).OfKind == "ValueError" then
+        if (caught).OfKind == "ValueError" then 
           let e := caught
           let _ ← pyPrintNoop
           -- Fallback to a zero matrix if dimensions fail
@@ -54,7 +54,7 @@ def process_data'rn : List (List Float) → List (List Float) → PastaLean.PyEx
             return result)
     return __py_try_val
   catch caught =>
-    if (caught).OfKind == "ValueError" then
+    if (caught).OfKind == "ValueError" then 
       let e := caught
       let _ ← pyPrintIO [pyPrintArg s! "Processing failed: {e}"]
       -- Fallback to a zero matrix if dimensions fail

@@ -59,7 +59,7 @@ noncomputable def main' :=
               wolves⦋i⦌ *ₚ Libraries.math.pyMathLogR (wolves⦋i⦌ +ₚ (1 : Int)))
         let _ ← pyPrintNoop
       -- final check
-      if decide (wolves⦋-1⦌ > (0.1 : Rat)) then
+      if h : wolves⦋-1⦌ > (0.1 : Rat) then 
         let _ ← pyPrintNoop
       else
         let _ ← pyPrintNoop) :
@@ -126,7 +126,7 @@ def main''rn :=
                       ".2f")} | Avg: {(PastaLean.pyFormatSpec avg
                       ".2f")} | Messy Entropy: {PastaLean.pyFormatSpec entropy ".2f"}"]
       -- final check
-      if decide (wolves⦋-1⦌ > (0.1 : Float)) then
+      if h : wolves⦋-1⦌ > (0.1 : Float) then 
         let _ ← pyPrintIO [pyPrintArg "The ecosystem survived!"]
       else
         let _ ← pyPrintIO [pyPrintArg "The wolves went extinct."]) :

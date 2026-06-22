@@ -37,6 +37,17 @@ initialize realContextRef : IO.Ref Bool ← IO.mkRef false
 /-- Read whether we're lowering inside a real-valued (`ℝ`) function body. -/
 def getRealContext : IO Bool := realContextRef.get
 
+/-- True while lowering a *condition position* — the direct test of an `if`/`while` — where a
+comparison may be a `Prop` (`a < b`, and `a = b`/`a ≠ b` in exact mode) so it is provable, paired
+with the `if h : …` hypothesis. False everywhere else (the default): a comparison used as a *value*
+— a comprehension element, an `and`/`or` operand, an `any`/`all` generator — must stay `Bool`
+(`decide (a < b)`, `==`), since a `Prop` has no value there. `Float` equality stays `==` regardless
+(no `DecidableEq`). See `compareApplyTerm`. -/
+initialize propConditionRef : IO.Ref Bool ← IO.mkRef false
+
+/-- Read whether comparisons may currently lower to a provable `Prop` (condition position). -/
+def getPropCondition : IO Bool := propConditionRef.get
+
 /-- When emitting the runnable "twin" of a declaration in `--mode both`, this is the suffix (`'rn`)
 appended to every top-level definition name AND to references to other user-defined functions/classes
 (listed in `userNamesRef`). Empty for the single-version `prove`/`run` modes. Lets one file carry the
@@ -128,6 +139,19 @@ def withRealContext {α : Type} (b : Bool) (x : PygenM α) : PygenM α := do
     return r
   catch e =>
     realContextRef.set saved
+    throw e
+
+/-- Run `x` with the prop-condition flag set to `b` (restoring it afterwards). `if`/`while` set it
+`true` around lowering their test; `and`/`or`/`not` operands set it back `false` (they need `Bool`). -/
+def withPropCondition {α : Type} (b : Bool) (x : PygenM α) : PygenM α := do
+  let saved ← propConditionRef.get
+  propConditionRef.set b
+  try
+    let r ← x
+    propConditionRef.set saved
+    return r
+  catch e =>
+    propConditionRef.set saved
     throw e
 
 /-- Lower `x` in real-context when `json` carries the per-variable `_real` stamp (exact mode) — set

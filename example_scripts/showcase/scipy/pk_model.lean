@@ -105,8 +105,8 @@ noncomputable def main' :=
       let mut dose_num := (0 : Int)
       for step in (PastaLean.pyRange nsteps)do
         -- Administer a dose into the gut depot when one is due.
-        if step %ₚ dose_step == (0 : Int) then
-          if decide (dose_num < ndoses) then
+        if h : step %ₚ dose_step = (0 : Int) then 
+          if h_1 : dose_num < ndoses then 
             depot := depot +ₚ dose
             dose_num := dose_num +ₚ (1 : Int)
           else
@@ -121,7 +121,7 @@ noncomputable def main' :=
         central := central +ₚ d_central *ₚ dt
         periph := periph +ₚ d_periph *ₚ dt
         t := t +ₚ dt
-        if step %ₚ every == (0 : Int) then
+        if h_1 : step %ₚ every = (0 : Int) then 
           let _ ← pyPrintNoop
         else
           let _ := ()) :
@@ -147,8 +147,8 @@ def main''rn :=
       let mut dose_num := (0 : Int)
       for step in (PastaLean.pyRange nsteps)do
         -- Administer a dose into the gut depot when one is due.
-        if step %ₚ dose_step == (0 : Int) then
-          if decide (dose_num < ndoses) then
+        if h : step %ₚ dose_step == (0 : Int) then 
+          if h_1 : dose_num < ndoses then 
             depot := depot +ₚ dose
             dose_num := dose_num +ₚ (1 : Int)
           else
@@ -163,7 +163,7 @@ def main''rn :=
         central := central +ₚ d_central *ₚ dt
         periph := periph +ₚ d_periph *ₚ dt
         t := t +ₚ dt
-        if step %ₚ every == (0 : Int) then
+        if h_1 : step %ₚ every == (0 : Int) then 
           let _ ←
             pyPrintIO
                 [pyPrintArg "S", pyPrintArg step, pyPrintArg t, pyPrintArg (concentration'rn central vol),
