@@ -44,6 +44,41 @@ def body_load(depot: float, central: float, periph: float) -> float:
     return norm([depot, central, periph])
 
 
+# --- Provable invariants of the model (transpiled to `theorem ... := by taste?`) ---
+# Each function's parameters are the universally-quantified variables; the `assert` is the property.
+# These are proof obligations: in the prove (ℚ) version they become `have/theorem ... := by taste?`;
+# the runnable version drops them.
+
+def mass_balance(ka: float, ke: float, k12: float, k21: float,
+                 depot: float, central: float, periph: float):
+    """Mass balance: the total rate of change equals exactly the elimination flux -ke*central."""
+    assert (depot_rate(ka, depot)
+            + central_rate(ka, ke, k12, k21, depot, central, periph)
+            + periph_rate(k12, k21, central, periph)) == -ke * central
+
+
+def distribution_conserves(k12: float, k21: float, central: float, periph: float):
+    """Distribution is mass-conserving: the peripheral-exchange terms net to zero."""
+    assert ((-k12 * central + k21 * periph) + (k12 * central - k21 * periph)) == 0
+
+
+def conserved_without_elimination(ka: float, k12: float, k21: float,
+                                  depot: float, central: float, periph: float):
+    """No elimination (ke = 0) => total drug is conserved (total rate is zero)."""
+    assert (depot_rate(ka, depot)
+            + central_rate(ka, 0, k12, k21, depot, central, periph)
+            + periph_rate(k12, k21, central, periph)) == 0
+
+
+def step_mass_balance(ka: float, ke: float, k12: float, k21: float,
+                      depot: float, central: float, periph: float, dt: float):
+    """One forward-Euler step loses exactly the eliminated amount ke*central*dt (no spurious leak)."""
+    new_depot = depot + depot_rate(ka, depot) * dt
+    new_central = central + central_rate(ka, ke, k12, k21, depot, central, periph) * dt
+    new_periph = periph + periph_rate(k12, k21, central, periph) * dt
+    assert (new_depot + new_central + new_periph) == (depot + central + periph) - ke * central * dt
+
+
 def main():
     ka = float(input())     # absorption rate (1/h)
     ke = float(input())     # elimination rate (1/h)

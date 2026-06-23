@@ -9,6 +9,11 @@ namespace PastaLean
 def assertSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
     | `doElem, json => do
+        -- An `assert` is a PROOF obligation — only meaningful in the prove (exact) version. The
+        -- runnable `'rn` / `--mode run` (approx) twin exists to execute, not to prove, so drop the
+        -- `have` there and emit a no-op statement instead.
+        if (← getNumericMode) == .approx then
+          return ← `(doElem| let _ := ())
         let .ok testJson := json.getObjValAs? Json "test" |
           throwError
           s!"Assert node does not have a 'test' field or it is not a JSON value: {json}"
@@ -19,8 +24,10 @@ def assertSyntax : (kind : SyntaxNodeKind) → Json →
          )
     | `command, json => do
         -- A top-level `assert` (outside any function) has no `do` block to host a `have`, so emit a
-        -- top-level `theorem` instead: it records the asserted proposition as a checked obligation
-        -- (proved by `grind`, else left as `sorry`). Same `(test = true)` shape as the inline case.
+        -- top-level `theorem` instead (prove version only — the run twin drops it). Proved by
+        -- `taste?`, else left as `sorry`. Same `(test = true)` shape as the inline case.
+        if (← getNumericMode) == .approx then
+          return ⟨mkNullNode #[]⟩
         let .ok testJson := json.getObjValAs? Json "test" |
           throwError
           s!"Assert node does not have a 'test' field or it is not a JSON value: {json}"

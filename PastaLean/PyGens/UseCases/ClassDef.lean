@@ -122,7 +122,7 @@ def classInitConstructor (className : String) (initJson : Json) (hasRealField : 
 
 /-- One method `def C.method …`. A getter is a pure `functionValueSyntax`; a mutator returns the
 rebuilt `self`. Static/class methods drop the leading `self`/`cls`. -/
-def classMethodDef (className : String) (info : ClassInfo) (m : Json) : PygenM (TSyntax `command) := do
+def classMethodDef (className : String) (info : ClassInfo) (m : Json) : PygenM (Array (TSyntax `command)) := do
   let .ok mName := m.getObjValAs? String "name" | throwError
     s!"Class method is missing a 'name': {m}"
   let defIdent := mkIdent (Name.mkStr className.toName mName)
@@ -146,7 +146,20 @@ def classMethodDef (className : String) (info : ClassInfo) (m : Json) : PygenM (
   let nc := (← getNumericMode) == .exact && m.getObjValAs? Bool "_real_fn" == .ok true
   let cmd ← if nc then `(command| noncomputable def $defIdent := $valueStx)
             else `(command| def $defIdent := $valueStx)
-  applyPrivacy mName cmd
+  let finalCmd ← applyPrivacy mName cmd
+  -- Prove-version (exact) methods get `@[simp]` (and `taste_ingr` when a pure, computable, non-
+  -- `assert` value method), so `taste?` can unfold them — mirroring free functions in `FuncDef`.
+  -- Never the `'rn` twin (approx mode is skipped). Methods are emitted as plain `def`s, not
+  -- `partial`, so there's no recursive-`@[simp]` hazard.
+  if (← getNumericMode) == .exact then
+    let isEffectful := bodyNeedsExceptionMonad bodyElems || bodyNeedsIOMonad bodyElems
+    let hasAssert := bodyElems.any (jsonNodeType? · == some "Assert")
+    let attrCmd ← if !isEffectful && !hasAssert && !nc
+      then `(command| attribute [simp, taste_ingr] $defIdent)
+      else `(command| attribute [simp] $defIdent)
+    return #[finalCmd, attrCmd]
+  else
+    return #[finalCmd]
 
 /-- A `__repr__`/`__str__` method becomes a `PyPrintable` instance, so `print(obj)` / `str(obj)`
 use it (overriding the `deriving Repr` fallback). -/
@@ -266,7 +279,7 @@ def classDefSyntax : (kind : SyntaxNodeKind) → Json → PygenM (TSyntax kind)
         else if let some inst ← classDunderInstance? name m then
           members := members.push inst
         else
-          members := members.push (← classMethodDef name info m)
+          members := members ++ (← classMethodDef name info m)
       -- No `__init__`: `C()` builds an all-defaults instance (fields use their declared defaults).
       unless hasInit do
         members := members.push (← `(command| def $(mkIdent (Name.mkStr name.toName "new")) : $nameId := default))

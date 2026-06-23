@@ -7,6 +7,7 @@ import PastaLean.PyGens.UseCases.ControlFlow
 import PastaLean.PyGens.UseCases.ListComp
 import PastaLean.PyGens.UseCases.Match
 import PastaLean.PyGens.UseCases.Exceptions
+import PastaLean.PyVerify.AssertTactic
 
 open Lean Meta Elab Term Qq Std
 
@@ -362,23 +363,45 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         -- `baseName` (unsuffixed) is still used to scan the JSON body for self-reference (recursion).
         let name ← withRunSuffix baseName
         let nameIdent := mkIdent name.toName
+        -- ONLY a function whose ENTIRE body is a *single* `assert` (plus comments/docstring) becomes a
+        -- top-level `theorem` (params → `∀`-binders, the assert → the proposition). Anything else —
+        -- multiple asserts, or statements alongside an assert — keeps each assert as a `have` inside a
+        -- normal `def` (see `Assert.lean`); those stay provable because every prove-version `def` is
+        -- `@[simp]` (below), so `taste?` can unfold the called functions. The run twin (`approx`)
+        -- drops a pure-assert theorem.
+        let bodyArr := (json.getObjValAs? (Array Json) "body").toOption.getD #[]
+        let substantive := bodyArr.filter (fun s =>
+          jsonNodeType? s != some "Comment" && jsonNodeType? s != some "DocString")
+        if substantive.size == 1 && jsonNodeType? substantive[0]! == some "Assert" then
+          if (← getNumericMode) == .approx then return ⟨mkNullNode #[]⟩
+          let argInfos ← functionArgInfos json
+          let .ok testJson := substantive[0]!.getObjValAs? Json "test" | throwError
+            s!"Assert node does not have a 'test' field: {substantive[0]!}"
+          let testTerm ← getCode testJson `term
+          let mut propTy ← `(($testTerm = true))
+          for (argIdent, ty?) in argInfos.reverse do
+            propTy ← match ty? with
+              | some ty => `(∀ ($argIdent : $ty), $propTy)
+              | none => `(∀ $argIdent, $propTy)
+          return ⟨mkNullNode #[(← `(command| theorem $nameIdent : $propTy := by taste?)).raw]⟩
         -- `_real_fn` (set by the Python per-variable pass) means the function produces or handles an
         -- `ℝ` value → it must be `noncomputable` in exact mode. This is now DECOUPLED from which
         -- floats are `ℝ`: real params carry a per-`arg` `_real` stamp (read in `functionArgInfos`)
         -- and real local literals are lowered under a per-assignment `withRealContext`; the function
         -- is NOT blanket-lifted, so its `ℚ` locals stay `ℚ`.
         let isReal := (← getNumericMode) == .exact && json.getObjValAs? Bool "_real_fn" == .ok true
-        let cmd ← do
-          let argInfos ← functionArgInfos json
-          match ← functionCommandWithEffectSignature? nameIdent argInfos json isReal with
+        let argInfos ← functionArgInfos json
+        let effectCmd? ← functionCommandWithEffectSignature? nameIdent argInfos json isReal
+        let bodyElems ← functionBodyElems json
+        let isRecursive := bodyElems.any (jsonReferencesName · baseName)
+        -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
+        let nc := isReal || (← bodyNeedsNoncomputable bodyElems)
+        let cmd ← match effectCmd? with
           | some cmd => pure cmd
           | none =>
-              let bodyElems ← functionBodyElems json
               let valueStx ← functionValueSyntax argInfos bodyElems
-              -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
-              let nc := isReal || (← bodyNeedsNoncomputable bodyElems)
               -- take care of recursion function Type
-              if bodyElems.any (jsonReferencesName · baseName) then
+              if isRecursive then
                 let fullTy? ← match ← functionReturnTypeSyntax? json with
                   | some retTy => functionArrowTypeSyntax? argInfos retTy
                   | none => pure none
@@ -392,7 +415,21 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
               else
                 `(def $nameIdent := $valueStx)
         -- Python's leading-underscore convention (`def _foo`) maps to a Lean `private def`.
-        applyPrivacy name cmd
+        let finalCmd ← applyPrivacy name cmd
+        -- Tag prove-version (exact) functions for proof search. Skip RECURSIVE/`partial` defs: Lean
+        -- rejects `@[simp]` on them (no unfolding equation). `taste_ingr` is narrower still — only a
+        -- *simple arithmetic* function (pure: no IO/raise, no `assert` in its body, computable) — so
+        -- `taste?`'s `simp only [taste_ingr]` stays a small fast set (never `main'`, a proof
+        -- obligation, or a noncomputable `norm` whose `whnf` would stall simp).
+        if (← getNumericMode) == .exact && !isRecursive then
+          let isEffectful := bodyNeedsExceptionMonad bodyElems || bodyNeedsIOMonad bodyElems
+          let hasAssert := bodyArr.any (jsonNodeType? · == some "Assert")
+          let attrCmd ← if !isEffectful && !hasAssert && !nc
+            then `(command| attribute [simp, taste_ingr] $nameIdent)
+            else `(command| attribute [simp] $nameIdent)
+          return ⟨mkNullNode #[finalCmd.raw, attrCmd.raw]⟩
+        else
+          return finalCmd
     | `term, json => do
         let argInfos ← functionArgInfos json
         let bodyElems ← functionBodyElems json
@@ -544,33 +581,6 @@ def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
           getCode value `term
         return valueStx
     | _, _ => throwError s!"Unsupported syntax category for Head_Return node"
-
-def f := fun n =>
-      let x := n -ₚ 1
-      let y := x *ₚ 2
-      x +ₚ y
-
-def f' := fun n =>
-    Id.run do
-      let mut x := n -ₚ 1
-      let y := x *ₚ 2
-      x := y -ₚ 1
-      return x +ₚ y
-
-def sumToNWithRec (n: Nat) : Nat :=
-  let rec sumToN (n: Nat) :=
-    match n with
-    | 0 => 0
-    | m + 1 =>  sumToN m + (m + 1)
-  sumToN n
-
-def sumToNWithRec' (n: Nat)  := Id.run do
-    let mut sum := 0
-    let mut i := 0
-    while i < n do
-      sum := sum + (i + 1)
-      i := i + 1
-    return sum
 
 /-- All top-level `FunctionDef` nodes in a module body, paired with their names, in module order. -/
 def topLevelFuncDefs (bodyElems : Array Json) : Array (String × Json) :=

@@ -107,13 +107,13 @@ theorem pyDict_keys_length_eq_values_length [BEq α] [EquivBEq α] [Hashable α]
   (pyKeys m).length = (pyValues m).length := by
     simp only [pyDict_keys_length_eq_items_length, pyDict_values_length_eq_items_length]
 
-#eval do
-  let myMap : Std.HashMap String Nat := {}
+-- #eval do
+--   let myMap : Std.HashMap String Nat := {}
 
-  -- Inserting values
-  let updatedMap := myMap.insert "apple" 1
-  let updatedMap2 := updatedMap.insert "banana" 2
-  pyDictGetOpt? updatedMap2 "apple" -- some 1
+--   -- Inserting values
+--   let updatedMap := myMap.insert "apple" 1
+--   let updatedMap2 := updatedMap.insert "banana" 2
+--   pyDictGetOpt? updatedMap2 "apple" -- some 1
 
 --   pyItems updatedMap2 -- [("apple", 1), ("banana", 2)]
 

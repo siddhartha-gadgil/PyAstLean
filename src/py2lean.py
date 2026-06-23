@@ -1539,8 +1539,10 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "open PastaLean",
                     "open Libraries",
                     "",
-                    "set_option linter.all false" # shut up warnings which annoyingly popup in output
-                    "\n\n",
+                    "set_option linter.all false",  # shut up warnings which annoyingly popup in output
+                    # Give `taste?`'s proof search some room beyond the default 200000 heartbeats.
+                    "set_option maxHeartbeats 800000",
+                    "\n",
                 ]
                 full_code = "\n".join(preamble_lines) + body_code
             else:

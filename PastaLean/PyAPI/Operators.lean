@@ -1,4 +1,7 @@
 import Mathlib
+-- `taste_ingr` (the targeted simp set `taste?` uses) is registered in its own module so the
+-- operator rewrite lemmas below can be tagged with it; see `TasteIngr`.
+import PastaLean.PyAPI.TasteIngr
 
 namespace PastaLean
 
@@ -389,13 +392,15 @@ These `@[simp]` lemmas (all `rfl`) let a proof do `simp [myFunc]` to expose plai
 which `ring`/`nlinarith` close the goal. So theorems can be proved directly on the generated
 `ℚ` definitions (no re-statement over `ℝ`). -/
 
-@[simp] theorem pyAdd_rat (a b : ℚ) : a +ₚ b = a + b := rfl
-@[simp] theorem pySub_rat (a b : ℚ) : a -ₚ b = a - b := rfl
-@[simp] theorem pyMul_rat (a b : ℚ) : a *ₚ b = a * b := rfl
-@[simp] theorem pyDiv_rat (a b : ℚ) : a /ₚ b = a / b := rfl
+-- Also in the `taste_ingr` set, so `taste?`'s `simp only [taste_ingr]` clears the `*ₚ` operators
+-- (turning them into plain `+ - * /`) without naming each lemma in the tactic.
+@[simp, taste_ingr] theorem pyAdd_rat (a b : ℚ) : a +ₚ b = a + b := rfl
+@[simp, taste_ingr] theorem pySub_rat (a b : ℚ) : a -ₚ b = a - b := rfl
+@[simp, taste_ingr] theorem pyMul_rat (a b : ℚ) : a *ₚ b = a * b := rfl
+@[simp, taste_ingr] theorem pyDiv_rat (a b : ℚ) : a /ₚ b = a / b := rfl
 
-@[simp] theorem pyAdd_int (a b : ℤ) : a +ₚ b = a + b := rfl
-@[simp] theorem pySub_int (a b : ℤ) : a -ₚ b = a - b := rfl
-@[simp] theorem pyMul_int (a b : ℤ) : a *ₚ b = a * b := rfl
+@[simp, taste_ingr] theorem pyAdd_int (a b : ℤ) : a +ₚ b = a + b := rfl
+@[simp, taste_ingr] theorem pySub_int (a b : ℤ) : a -ₚ b = a - b := rfl
+@[simp, taste_ingr] theorem pyMul_int (a b : ℤ) : a *ₚ b = a * b := rfl
 
 end PastaLean
