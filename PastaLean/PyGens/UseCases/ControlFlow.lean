@@ -565,7 +565,7 @@ def ifSyntax : (kind : SyntaxNodeKind) → Json →
         let mainIdent := mkIdent (← withRunSuffix "main").toName
         -- A guard that calls into a real-valued (`ℝ`, exact mode) function makes the `main`
         -- wrapper depend on a `noncomputable` def, so it must itself be `noncomputable` (it
-        -- still elaborates / compile-checks; it just can't be run — use `--approx` to run).
+        -- still elaborates / compile-checks; it just can't be run — use `--mode run` to run).
         let isReal := (← getNumericMode) == .exact && json.getObjValAs? Bool "_real_fn" == .ok true
         let mkMain : TSyntax `term → PygenM (TSyntax `command) := fun body =>
           if isReal then `(command| noncomputable def $mainIdent : IO Unit := $body)

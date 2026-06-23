@@ -33,7 +33,7 @@ partial def functionArgTypeSyntax? (annotationJson : Json) : PygenM (Option (TSy
       | "bool" | "Bool" => return some (mkIdent ``Bool)
       | "str" | "String" => return some (mkIdent ``String)
       -- `float` → exact `ℚ` (default), `ℝ` under real-context (a real-marked param, set in
-      -- `functionArgInfos`), or `Float` (--approx). Real-context preserves container shape:
+      -- `functionArgInfos`), or `Float` (`--mode run`). Real-context preserves container shape:
       -- `list[list[float]]` → `List (List ℝ)`, a scalar `float` → `ℝ`.
       | "float" | "Float" =>
           match ← getNumericMode with
@@ -109,7 +109,7 @@ partial def jsonUsesRealTranscendental (json : Json) : Bool :=
     | _ => false
 
 /-- Whether any body statement uses an `ℝ` transcendental, but only in exact numeric mode
-(in `--approx` the transcendentals stay computable `Float`, so no `noncomputable` is needed). -/
+(in `--mode run` the transcendentals stay computable `Float`, so no `noncomputable` is needed). -/
 def bodyNeedsNoncomputable (bodyElems : Array Json) : PygenM Bool := do
   if (← getNumericMode) == .exact then
     return bodyElems.any jsonUsesRealTranscendental
@@ -363,22 +363,51 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         -- `baseName` (unsuffixed) is still used to scan the JSON body for self-reference (recursion).
         let name ← withRunSuffix baseName
         let nameIdent := mkIdent name.toName
-        -- ONLY a function whose ENTIRE body is a *single* `assert` (plus comments/docstring) becomes a
-        -- top-level `theorem` (params → `∀`-binders, the assert → the proposition). Anything else —
-        -- multiple asserts, or statements alongside an assert — keeps each assert as a `have` inside a
-        -- normal `def` (see `Assert.lean`); those stay provable because every prove-version `def` is
-        -- `@[simp]` (below), so `taste?` can unfold the called functions. The run twin (`approx`)
-        -- drops a pure-assert theorem.
+        -- A function whose ENTIRE body is a single proof obligation becomes a top-level `theorem`
+        -- (params → `∀`-binders; the proposition is lowered as a `Prop` via `withPropCondition`, so a
+        -- `==` is `=` and a `<`/`≤` is a real order relation — no `decide`, no `= true`). Two shapes:
+        --   • a lone `assert C`             → `theorem … : ∀ …, C`
+        --   • `if H: assert C` (no `else`)  → `theorem … : ∀ …, H → C` — the guard is the hypothesis,
+        --       and a conjunction `H1 and H2` is curried into `H1 → H2 → C` (named hyps for the prover).
+        -- Anything else (multiple asserts, statements + assert) keeps each assert as a `have` inside a
+        -- normal `def` — still non-monadic (see `Head_Assert`) and provable (`@[simp]` callees). The
+        -- run twin (`approx`) drops these obligations.
         let bodyArr := (json.getObjValAs? (Array Json) "body").toOption.getD #[]
-        let substantive := bodyArr.filter (fun s =>
-          jsonNodeType? s != some "Comment" && jsonNodeType? s != some "DocString")
-        if substantive.size == 1 && jsonNodeType? substantive[0]! == some "Assert" then
+        let isSubstantive := fun (s : Json) =>
+          jsonNodeType? s != some "Comment" && jsonNodeType? s != some "DocString"
+        let substantive := bodyArr.filter isSubstantive
+        -- Structural check (no codegen): is the body a single theorem-shaped statement? Returns the
+        -- guard conjuncts (empty for a lone assert) paired with the conclusion's `test` JSON.
+        let thmShape? : Option (Array Json × Json) :=
+          if substantive.size != 1 then none
+          else
+            let stmt := substantive[0]!
+            match jsonNodeType? stmt with
+            | some "Assert" => (stmt.getObjValAs? Json "test").toOption.map (fun t => (#[], t))
+            | some "If" =>
+                let body := (stmt.getObjValAs? (Array Json) "body").toOption.getD #[]
+                let orelse := (stmt.getObjValAs? (Array Json) "orelse").toOption.getD #[]
+                let bodySubst := body.filter isSubstantive
+                if orelse.isEmpty && bodySubst.size == 1
+                    && jsonNodeType? bodySubst[0]! == some "Assert" then
+                  match stmt.getObjValAs? Json "test", bodySubst[0]!.getObjValAs? Json "test" with
+                  | .ok hyp, .ok concl =>
+                      let hyps :=
+                        if jsonNodeType? hyp == some "BoolOp"
+                            && hyp.getObjValAs? String "op" == .ok "and" then
+                          (hyp.getObjValAs? (Array Json) "values").toOption.getD #[hyp]
+                        else #[hyp]
+                      some (hyps, concl)
+                  | _, _ => none
+                else none
+            | _ => none
+        if let some (hypJsons, conclJson) := thmShape? then
           if (← getNumericMode) == .approx then return ⟨mkNullNode #[]⟩
           let argInfos ← functionArgInfos json
-          let .ok testJson := substantive[0]!.getObjValAs? Json "test" | throwError
-            s!"Assert node does not have a 'test' field: {substantive[0]!}"
-          let testTerm ← getCode testJson `term
-          let mut propTy ← `(($testTerm = true))
+          let mut propTy ← withPropCondition true (getCode conclJson `term)
+          for hypJson in hypJsons.reverse do
+            let hyp ← withPropCondition true (getCode hypJson `term)
+            propTy ← `($hyp → $propTy)
           for (argIdent, ty?) in argInfos.reverse do
             propTy ← match ty? with
               | some ty => `(∀ ($argIdent : $ty), $propTy)

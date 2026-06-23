@@ -237,6 +237,75 @@ rests only on `propext, Classical.choice, Quot.sound` (no `sorry`).
 
 ---
 
+## 8b. In-source proofs: `assert` → `theorem` / `have`
+
+The companion file above is hand-written. You can also put the obligation **in the Python source**
+as an `assert`: the transpiler turns it into a Lean proof obligation discharged by `taste?` (a
+tactic that tries a list of candidates and falls back to `sorry`). These exist only in the prove
+(`--mode prove`, `ℚ`) build — the runnable twin (`--mode run`, or the `'rn` twin emitted by the
+default `--mode both`) drops them.
+
+The load-bearing rule: **an `assert` keeps its function non-monadic.** A proof obligation buried in
+`Id.run do` loses the leverage `ring` / `nlinarith` / `taste?` need, so assert-bearing functions
+stay pure terms (a `let`-chain ending in the obligation), never a `do`-block. And the obligation is
+lowered as a **`Prop`**, not a `Bool`: `==` becomes `=`, `<` / `≤` become real order relations — no
+`decide`, no `= true`.
+
+**Exactly two shapes become a named `theorem`; everything else is a non-monadic `def` with `have`s:**
+
+**1. A lone `assert` → a named `theorem`.** A function whose entire body is one `assert`
+(comments/docstrings aside) becomes a top-level `theorem`: the parameters are the
+universally-quantified variables, the assert's test is the proposition.
+
+```python
+def scale_preserves_total(xs: list[float], c: float):
+    assert sum(scaled(xs, c)) == c * sum(xs)
+```
+→ `theorem scale_preserves_total : ∀ (xs : List ℚ) (c : ℚ), … = … := by taste?`
+
+This is the form to reach for when you want a **named, reusable** lemma — it reads as a first-class
+theorem, and the run twin simply drops it.
+
+**2. `if H: assert C` → a theorem with hypotheses.** A bare `assert` leaves every parameter
+unconstrained, but most invariants only hold under preconditions. Guard the assert with an `if`: the
+guard becomes the theorem's hypotheses, and a conjunction is curried into separate named ones.
+
+```python
+def discount_never_raises_price(price: float, rate: float):
+    if price >= 0 and rate >= 0:
+        assert discounted(price, rate) <= price
+```
+→ `theorem … : ∀ (price rate : ℚ), price ≥ 0 → rate ≥ 0 → discounted price rate ≤ price := by taste?`
+
+The `if`-guard is exactly the `(h1 : …) (h2 : …)` hypothesis list you'd otherwise write by hand —
+`taste?` `intro`s them and hands them to `nlinarith`. The correspondence is one-to-one: **every
+hypothesis in the generated Lean theorem comes from one conjunct of the Python `if`** — a guard
+`if H1 and H2 and H3:` becomes the curried chain `H1 → H2 → H3 → C`. (Only these two shapes — a lone
+`assert`, or `if <guard>: assert` with no `else` — are promoted to a `theorem`.)
+
+**3. Anything else → a non-monadic `def` with in-body `have`s.** Two (or more) asserts, or
+statements alongside an assert, do **not** become a theorem. The function stays an ordinary,
+**still non-monadic** `def`, and each assert becomes an anonymous `have ht : … := by taste?` threaded
+through the body — never `Id.run do`. *Even two bare asserts stay a `def` with two `have`s.* Handy
+for an inline sanity check over locally-computed values:
+
+```python
+def step_conserves(x: float, v: float, dt: float):
+    x_next = x + v * dt
+    assert x_next - x == v * dt
+```
+→ a pure `let x_next := …; have ht : … := by taste?` (no `Id.run do`). Lean still checks it, but it's
+an anonymous `have`, not an externally-referenceable named lemma.
+
+**Rule of thumb.** Want a named, reusable theorem → make the property its **own** function with a
+single `assert` (use `if H: assert C` when it needs preconditions). Want an inline check over
+intermediates → put the `assert` **inside** the function and accept an anonymous `have`. `assert`
+(in-source) and the companion `*_theorems.lean` (§8) are complementary: asserts keep the obligation
+next to the code and auto-discharge the routine ones; the companion file is for invariants you want
+stated independently over `ℝ`, or proved with a bespoke tactic.
+
+---
+
 ## 9. Checklist & anti-patterns
 
 **Rules for maximum Tier 0 (provable)**

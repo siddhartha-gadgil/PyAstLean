@@ -79,6 +79,24 @@ def step_mass_balance(ka: float, ke: float, k12: float, k21: float,
     assert (new_depot + new_central + new_periph) == (depot + central + periph) - ke * central * dt
 
 
+def depot_nonincreasing(ka: float, depot: float):
+    """The gut depot drains between doses: with ka >= 0 and a non-negative amount left in the gut,
+    dD/dt <= 0 (absent a new dose the depot only empties). The `if` guard becomes the theorem's
+    hypotheses (`ka >= 0 -> depot >= 0 -> ...`)."""
+    if ka >= 0 and depot >= 0:
+        assert depot_rate(ka, depot) <= 0
+
+
+def total_nonincreasing(ka: float, ke: float, k12: float, k21: float,
+                        depot: float, central: float, periph: float):
+    """Elimination is the only sink: with ke >= 0 and central >= 0 the total system rate is <= 0 --
+    drug can only leave the body, never spontaneously appear."""
+    if ke >= 0 and central >= 0:
+        assert (depot_rate(ka, depot)
+                + central_rate(ka, ke, k12, k21, depot, central, periph)
+                + periph_rate(k12, k21, central, periph)) <= 0
+
+
 def main():
     ka = float(input())     # absorption rate (1/h)
     ke = float(input())     # elimination rate (1/h)

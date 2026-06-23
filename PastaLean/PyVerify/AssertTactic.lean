@@ -20,10 +20,12 @@ fixed list of candidate tactics in order; the first one that *closes the goal* i
 /-- The candidate tactics tried for an assert goal, in order. Edit this list to taste. -/
 def assertCandidates : TacticM (Array (TSyntax `tactic)) := do
   return #[
-    -- `taste_ingr` already holds the transpiled functions AND the `*ₚ` operator lemmas, so these
-    -- The `zetaDelta` is for `have` that binds intermediate `let`s (`new_depot := …`).
-    ← `(tactic| (intros <;> simp_all (config := { zetaDelta := true }) [taste_ingr] <;> push_cast <;> grind +suggestions +locals)),
-    ← `(tactic| (simp_all [taste_ingr] <;> grind +locals +suggestions)),
+    ← `(tactic| (intros <;> simp only [taste_ingr] <;> push_cast <;> ring)),
+    ← `(tactic| (intros <;> simp (config := { zetaDelta := true }) only [taste_ingr] <;> push_cast <;> ring)),
+    ← `(tactic| (intros <;> simp only [taste_ingr] at * <;> push_cast at * <;> nlinarith)),
+    ← `(tactic| (intros <;> simp (config := { zetaDelta := true }) only [taste_ingr] at * <;> push_cast at * <;> nlinarith)),
+    -- General fallbacks.
+    ← `(tactic| simp_all [taste_ingr]),
     ← `(tactic| grind +locals +suggestions),
     ← `(tactic| try?),
     ← `(tactic| sorry),
