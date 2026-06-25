@@ -91,27 +91,29 @@ def pyGetD [BEq α] [Hashable α] (m : Std.HashMap α β) (key : α) (default : 
 
 theorem pyDict_length_eq_items_length [BEq α] [EquivBEq α] [Hashable α] [LawfulHashable α](m : Std.HashMap α β) :
   m.size = (pyItems m).length := by
-    simp [pyItems,pyDictItems, Std.HashMap.length_toList]
+    simp only [pyItems, pyDictItems, Std.HashMap.length_toList]
 
 theorem pyDict_keys_length_eq_items_length [BEq α] [EquivBEq α] [Hashable α] [LawfulHashable α](m : Std.HashMap α β) :
   (pyKeys m).length = (pyItems m).length := by
-    simp [pyKeys,pyItems, pyDictItems, Std.HashMap.length_toList, pyDictKeys]
+    simp only [pyKeys, pyDictKeys, Std.HashMap.map_fst_toList_eq_keys, Std.HashMap.length_keys,
+      pyItems, pyDictItems, Std.HashMap.length_toList]
 
 theorem pyDict_values_length_eq_items_length [BEq α] [EquivBEq α] [Hashable α] [LawfulHashable α](m : Std.HashMap α β) :
   (pyValues m).length = (pyItems m).length := by
-    simp [pyValues, pyItems, pyDictItems, Std.HashMap.length_toList, pyDictValues]
+    simp only [pyValues, pyDictValues, List.length_map, Std.HashMap.length_toList, pyItems,
+      pyDictItems]
 
 theorem pyDict_keys_length_eq_values_length [BEq α] [EquivBEq α] [Hashable α] [LawfulHashable α](m : Std.HashMap α β) :
   (pyKeys m).length = (pyValues m).length := by
-    simp [pyDict_keys_length_eq_items_length, pyDict_values_length_eq_items_length]
+    simp only [pyDict_keys_length_eq_items_length, pyDict_values_length_eq_items_length]
 
-#eval do
-  let myMap : Std.HashMap String Nat := {}
+-- #eval do
+--   let myMap : Std.HashMap String Nat := {}
 
-  -- Inserting values
-  let updatedMap := myMap.insert "apple" 1
-  let updatedMap2 := updatedMap.insert "banana" 2
-  pyDictGetOpt? updatedMap2 "apple" -- some 1
+--   -- Inserting values
+--   let updatedMap := myMap.insert "apple" 1
+--   let updatedMap2 := updatedMap.insert "banana" 2
+--   pyDictGetOpt? updatedMap2 "apple" -- some 1
 
 --   pyItems updatedMap2 -- [("apple", 1), ("banana", 2)]
 

@@ -5,6 +5,7 @@ open PastaLean
 open Libraries
 
 set_option linter.all false
+set_option maxHeartbeats 800000
 
 /-
 A small numeric-toolkit showcase: `typing` annotations + a `scipy` subset, all transpiled
@@ -19,6 +20,8 @@ def variance := fun (xs : List Rat) ↦
         total := total +ₚ (x -ₚ m) *ₚ (x -ₚ m)
       let __py_ret_1 := total /ₚ PastaLean.pyLen xs
       return __py_ret_1)
+
+attribute [simp, taste_ingr] variance
 
 def variance'rn := fun (xs : List Float) ↦
   Id.run
@@ -53,6 +56,8 @@ noncomputable def main' :=
       let _ ←
         pyPrintNoop [pyPrintArg "norm[3,4] =", pyPrintArg (Libraries.scipy.pyScipyNormR [(3.0 : Rat), (4.0 : Rat)])]) :
     IO _)
+
+attribute [simp] main'
 
 def main''rn :=
   ((do

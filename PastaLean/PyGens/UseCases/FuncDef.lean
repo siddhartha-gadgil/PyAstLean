@@ -7,6 +7,7 @@ import PastaLean.PyGens.UseCases.ControlFlow
 import PastaLean.PyGens.UseCases.ListComp
 import PastaLean.PyGens.UseCases.Match
 import PastaLean.PyGens.UseCases.Exceptions
+import PastaLean.PyVerify.AssertTactic
 
 open Lean Meta Elab Term Qq Std
 
@@ -32,7 +33,7 @@ partial def functionArgTypeSyntax? (annotationJson : Json) : PygenM (Option (TSy
       | "bool" | "Bool" => return some (mkIdent ``Bool)
       | "str" | "String" => return some (mkIdent ``String)
       -- `float` → exact `ℚ` (default), `ℝ` under real-context (a real-marked param, set in
-      -- `functionArgInfos`), or `Float` (--approx). Real-context preserves container shape:
+      -- `functionArgInfos`), or `Float` (`--mode run`). Real-context preserves container shape:
       -- `list[list[float]]` → `List (List ℝ)`, a scalar `float` → `ℝ`.
       | "float" | "Float" =>
           match ← getNumericMode with
@@ -108,7 +109,7 @@ partial def jsonUsesRealTranscendental (json : Json) : Bool :=
     | _ => false
 
 /-- Whether any body statement uses an `ℝ` transcendental, but only in exact numeric mode
-(in `--approx` the transcendentals stay computable `Float`, so no `noncomputable` is needed). -/
+(in `--mode run` the transcendentals stay computable `Float`, so no `noncomputable` is needed). -/
 def bodyNeedsNoncomputable (bodyElems : Array Json) : PygenM Bool := do
   if (← getNumericMode) == .exact then
     return bodyElems.any jsonUsesRealTranscendental
@@ -345,6 +346,54 @@ def functionCommandWithEffectSignature? (nameIdent : TSyntax `ident)
   else
     return none
 
+/-- A single theorem-shaped obligation → `(hypotheses, conclusion-test)`. A bare `assert C` gives
+`(#[], C)`; `if H: assert C` (no `else`, body a lone assert) gives the guard's conjuncts and `C` (a
+conjunction `H1 and H2` splits into separate hypotheses, so the prover gets named hyps). `none`
+otherwise. This is the per-statement half of `theoremShape?`; add new obligation forms here. -/
+def obligationShape? (stmt : Json) : Option (Array Json × Json) :=
+  match jsonNodeType? stmt with
+  | some "Assert" => (stmt.getObjValAs? Json "test").toOption.map (fun t => (#[], t))
+  | some "If" =>
+      let isSubst := fun (s : Json) =>
+        jsonNodeType? s != some "Comment" && jsonNodeType? s != some "DocString"
+      let body := ((stmt.getObjValAs? (Array Json) "body").toOption.getD #[]).filter isSubst
+      let orelse := (stmt.getObjValAs? (Array Json) "orelse").toOption.getD #[]
+      if orelse.isEmpty && body.size == 1 && jsonNodeType? body[0]! == some "Assert" then
+        match stmt.getObjValAs? Json "test", body[0]!.getObjValAs? Json "test" with
+        | .ok hyp, .ok concl =>
+            let hyps :=
+              if jsonNodeType? hyp == some "BoolOp" && hyp.getObjValAs? String "op" == .ok "and" then
+                (hyp.getObjValAs? (Array Json) "values").toOption.getD #[hyp]
+              else #[hyp]
+            some (hyps, concl)
+        | _, _ => none
+      else none
+  | _ => none
+
+/-- The promotable theorem shape of a *pure* function body: zero or more pure `let`-bindings (fresh
+distinct simple names — no reassignment or parameter mutation) followed by exactly ONE obligation
+(`obligationShape?`). Returns `(lets, hypotheses, conclusion)`, or `none` when the body is monadic
+(IO / `raise` / `try`), has a loop / mutation / early return, or isn't `let`s-then-one-obligation.
+Single source of truth for assert→theorem promotion: monadic bodies can never match, since they
+carry an IO/except effect or a non-`Assign` statement before the obligation. -/
+def theoremShape? (paramNames : Array String) (body : Array Json) (substantive : Array Json) :
+    Option (Array Json × Array Json × Json) := Id.run do
+  if substantive.isEmpty then return none
+  if bodyNeedsIOMonad body || bodyNeedsExceptionMonad body then return none
+  let lets := substantive.pop
+  let last := substantive[substantive.size - 1]!
+  let mut seen : Array String := #[]
+  for s in lets do
+    if jsonNodeType? s != some "Assign" then return none
+    let .ok target := s.getObjVal? "target" | return none
+    if jsonNodeType? target != some "Name" then return none
+    let .ok tname := target.getObjValAs? String "id" | return none
+    if paramNames.contains tname || seen.contains tname then return none
+    seen := seen.push tname
+  match obligationShape? last with
+  | some (hyps, concl) => return some (lets, hyps, concl)
+  | none => return none
+
 @[pygen "FunctionDef"]
 def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -362,23 +411,60 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         -- `baseName` (unsuffixed) is still used to scan the JSON body for self-reference (recursion).
         let name ← withRunSuffix baseName
         let nameIdent := mkIdent name.toName
+        -- A *pure* body that is some `let`-bindings followed by ONE obligation (`assert C`, or
+        -- `if H: assert C`) becomes a named, reusable `@[taste_ingr] theorem`. `theoremShape?` is the
+        -- single source of truth — it returns `(lets, hyps, conclusion)` and matches only pure bodies,
+        -- so monadic/loop/mutation bodies never reach here. The statement is built outside-in:
+        -- `∀ params, let x := …; H1 → … → C`, lowered as a `Prop` (so `==`→`=`, `<`/`≤`→real order).
+        -- The run twin (`approx`) drops the obligation. Anything else (≥2 asserts, non-`let` statements)
+        -- stays a `def` with anonymous `have`s (see `Head_Assert`).
+        let bodyArr := (json.getObjValAs? (Array Json) "body").toOption.getD #[]
+        let substantive := bodyArr.filter fun (s : Json) =>
+          jsonNodeType? s != some "Comment" && jsonNodeType? s != some "DocString"
+        let paramNames := (← functionArgInfos json).map (fun (id, _) => id.getId.toString)
+        if let some (letJsons, hypJsons, conclJson) := theoremShape? paramNames bodyArr substantive then
+          if (← getNumericMode) == .approx then return ⟨mkNullNode #[]⟩
+          let argInfos ← functionArgInfos json
+          let thmCmd ← withFreshVariables do
+            -- register the `let`-bound names so they lower as locals inside the proposition
+            for letJson in letJsons do
+              if let .ok tname := (letJson.getObjVal? "target").bind (·.getObjValAs? String "id") then
+                addVar tname.toName
+            -- build outside-in: conclusion, then hypothesis arrows, then `let`-binders, then `∀`s
+            let mut propTy ← withPropCondition true (getCode conclJson `term)
+            for hypJson in hypJsons.reverse do
+              propTy ← `($(← withPropCondition true (getCode hypJson `term)) → $propTy)
+            for letJson in letJsons.reverse do
+              let .ok target := letJson.getObjVal? "target" |
+                throwError "theoremShape: Assign without target"
+              let .ok value := letJson.getObjVal? "value" |
+                throwError "theoremShape: Assign without value"
+              propTy ← `(let $(← getCode target `ident) := $(← getCode value `term)
+                         $propTy)
+            for (argIdent, ty?) in argInfos.reverse do
+              propTy ← match ty? with
+                | some ty => `(∀ ($argIdent : $ty), $propTy)
+                | none => `(∀ $argIdent, $propTy)
+            `(command| @[taste_ingr] theorem $nameIdent : $propTy := by taste?)
+          return ⟨mkNullNode #[thmCmd.raw]⟩
         -- `_real_fn` (set by the Python per-variable pass) means the function produces or handles an
         -- `ℝ` value → it must be `noncomputable` in exact mode. This is now DECOUPLED from which
         -- floats are `ℝ`: real params carry a per-`arg` `_real` stamp (read in `functionArgInfos`)
         -- and real local literals are lowered under a per-assignment `withRealContext`; the function
         -- is NOT blanket-lifted, so its `ℚ` locals stay `ℚ`.
         let isReal := (← getNumericMode) == .exact && json.getObjValAs? Bool "_real_fn" == .ok true
-        let cmd ← do
-          let argInfos ← functionArgInfos json
-          match ← functionCommandWithEffectSignature? nameIdent argInfos json isReal with
+        let argInfos ← functionArgInfos json
+        let effectCmd? ← functionCommandWithEffectSignature? nameIdent argInfos json isReal
+        let bodyElems ← functionBodyElems json
+        let isRecursive := bodyElems.any (jsonReferencesName · baseName)
+        -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
+        let nc := isReal || (← bodyNeedsNoncomputable bodyElems)
+        let cmd ← match effectCmd? with
           | some cmd => pure cmd
           | none =>
-              let bodyElems ← functionBodyElems json
               let valueStx ← functionValueSyntax argInfos bodyElems
-              -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
-              let nc := isReal || (← bodyNeedsNoncomputable bodyElems)
               -- take care of recursion function Type
-              if bodyElems.any (jsonReferencesName · baseName) then
+              if isRecursive then
                 let fullTy? ← match ← functionReturnTypeSyntax? json with
                   | some retTy => functionArrowTypeSyntax? argInfos retTy
                   | none => pure none
@@ -392,7 +478,21 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
               else
                 `(def $nameIdent := $valueStx)
         -- Python's leading-underscore convention (`def _foo`) maps to a Lean `private def`.
-        applyPrivacy name cmd
+        let finalCmd ← applyPrivacy name cmd
+        -- Tag prove-version (exact) functions for proof search. Skip RECURSIVE/`partial` defs: Lean
+        -- rejects `@[simp]` on them (no unfolding equation). `taste_ingr` is narrower still — only a
+        -- *simple arithmetic* function (pure: no IO/raise, no `assert` in its body, computable) — so
+        -- `taste?`'s `simp only [taste_ingr]` stays a small fast set (never `main'`, a proof
+        -- obligation, or a noncomputable `norm` whose `whnf` would stall simp).
+        if (← getNumericMode) == .exact && !isRecursive then
+          let isEffectful := bodyNeedsExceptionMonad bodyElems || bodyNeedsIOMonad bodyElems
+          let hasAssert := bodyArr.any (jsonNodeType? · == some "Assert")
+          let attrCmd ← if !isEffectful && !hasAssert && !nc
+            then `(command| attribute [simp, taste_ingr] $nameIdent)
+            else `(command| attribute [simp] $nameIdent)
+          return ⟨mkNullNode #[finalCmd.raw, attrCmd.raw]⟩
+        else
+          return finalCmd
     | `term, json => do
         let argInfos ← functionArgInfos json
         let bodyElems ← functionBodyElems json
@@ -544,33 +644,6 @@ def returnHeadSyntax : (kind : SyntaxNodeKind) → Json →
           getCode value `term
         return valueStx
     | _, _ => throwError s!"Unsupported syntax category for Head_Return node"
-
-def f := fun n =>
-      let x := n -ₚ 1
-      let y := x *ₚ 2
-      x +ₚ y
-
-def f' := fun n =>
-    Id.run do
-      let mut x := n -ₚ 1
-      let y := x *ₚ 2
-      x := y -ₚ 1
-      return x +ₚ y
-
-def sumToNWithRec (n: Nat) : Nat :=
-  let rec sumToN (n: Nat) :=
-    match n with
-    | 0 => 0
-    | m + 1 =>  sumToN m + (m + 1)
-  sumToN n
-
-def sumToNWithRec' (n: Nat)  := Id.run do
-    let mut sum := 0
-    let mut i := 0
-    while i < n do
-      sum := sum + (i + 1)
-      i := i + 1
-    return sum
 
 /-- All top-level `FunctionDef` nodes in a module body, paired with their names, in module order. -/
 def topLevelFuncDefs (bodyElems : Array Json) : Array (String × Json) :=

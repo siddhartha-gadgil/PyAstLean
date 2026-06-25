@@ -232,7 +232,6 @@ theorem pyLower_is_lower (s : String) : pyIsLower s = true → pyStringLower s =
   intro h
   unfold pyIsLower at h
   unfold pyStringLower
-  simp
   simp_all only [List.all_filter, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true]
   have eq : List.map Char.toLower s.toList = s.toList := by
     have h'' : (List.map Char.toLower s.toList).length = s.toList.length := by grind
@@ -244,17 +243,9 @@ theorem pyLower_is_lower (s : String) : pyIsLower s = true → pyStringLower s =
         have g : s.toList[n] ∈ s.toList := by simp
         have g' : s.toList[n].isAlpha = false ∨ s.toList[n].isLower = true := by simp[h,g]
         by_cases sc : s.toList[n].isLower
-        · simp [sc] at g'
-          apply Char.toLower_eq_of_not_isUpper
-          apply Char.not_isUpper_of_isLower
-          exact sc
-        · simp [sc] at g'
-          apply Char.toLower_eq_of_not_isUpper
-          simp_all only [List.getElem_mem, Bool.not_eq_true]
-          unfold Char.isAlpha at g'
-          simp [sc] at g'
-          exact g'
-      · grind
+        · grind only [Char.not_isLower_of_isUpper, Char.toLower_eq_of_not_isUpper]
+        · grind only [Char.isAlpha, Char.toLower_eq_of_not_isUpper]
+      · grind only [= getElem!_neg]
   simp [eq]
 
 
@@ -262,7 +253,6 @@ theorem pyUpper_is_upper (s : String) : pyIsUpper s = true → pyStringUpper s =
   intro h
   unfold pyIsUpper at h
   unfold pyStringUpper
-  simp
   simp_all only [List.all_filter, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true]
   have eq : List.map Char.toUpper s.toList = s.toList := by
     have h'' : (List.map Char.toUpper s.toList).length = s.toList.length := by grind
@@ -274,17 +264,9 @@ theorem pyUpper_is_upper (s : String) : pyIsUpper s = true → pyStringUpper s =
         have g : s.toList[n] ∈ s.toList := by simp
         have g' : s.toList[n].isAlpha = false ∨ s.toList[n].isUpper = true := by simp[h,g]
         by_cases sc : s.toList[n].isUpper
-        · simp [sc] at g'
-          apply Char.toUpper_eq_of_not_isLower
-          apply Char.not_isLower_of_isUpper
-          exact sc
-        · simp [sc] at g'
-          apply Char.toUpper_eq_of_not_isLower
-          simp_all only [List.getElem_mem, Bool.not_eq_true]
-          unfold Char.isAlpha at g'
-          simp [sc] at g'
-          exact g'
-      · grind
+        · grind only [Char.toUpper_eq_of_not_isLower, Char.not_isLower_of_isUpper]
+        · grind only [Char.isAlpha, Char.toUpper_eq_of_not_isLower]
+      · grind only [= getElem!_neg]
   simp [eq]
 
 theorem pyLower_is_true_lower (s : String) : pyIsLower (pyStringLower s) = true := by

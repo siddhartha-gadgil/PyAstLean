@@ -5,6 +5,7 @@ open PastaLean
 open Libraries
 
 set_option linter.all false
+set_option maxHeartbeats 800000
 
 noncomputable def main' :=
   ((do
@@ -72,6 +73,8 @@ noncomputable def main' :=
       else
         let _ ← pyPrintNoop [pyPrintArg "The wolves went extinct."]) :
     IO _)
+
+attribute [simp] main'
 
 def main''rn :=
   ((do

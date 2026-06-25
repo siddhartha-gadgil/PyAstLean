@@ -5,7 +5,10 @@ open PastaLean
 
 def backendModules : Array Import := #[
   { module := `PastaLean },
-  { module := `Mathlib }
+  { module := `Mathlib },
+  -- `Libraries` is imported so the `proveFile` pass can elaborate generated programs that
+  -- `open Libraries` (numpy/scipy shims) without a second cold import of Mathlib.
+  { module := `Libraries }
 ]
 
 unsafe def initBackend : IO (Core.Context × Environment) := do
@@ -50,11 +53,38 @@ def runTranslateTask (jsonTask : Json) (ctx : Core.Context) (env : Environment) 
     | .ok code => successResponse target code
     | .error err => errorResponse err
 
+/-- Drop `import …` lines from generated Lean text. The backend has already imported everything at
+boot, so the `proveFile` pass elaborates only the *commands* (opens, set_options, defs, theorems). -/
+def stripImports (code : String) : String :=
+  String.intercalate "\n" <|
+    (code.splitOn "\n").filter (fun l => ¬ l.trim.startsWith "import ")
+
+/-- Elaborate an already-generated program (with `:= by taste?` proof obligations) into the warm
+boot `env`, letting the `taste?` tactic search each assert and record its winning tactic string into
+`PastaLean.tasteWinnersRef`. Returns the winners in elaboration order (one per `taste?`), so the
+Python driver can splice each back over the matching `taste?` token. No Mathlib re-import. -/
+def runProveFileTask (jsonTask : Json) (env : Environment) : IO Json := do
+  let .ok code := jsonTask.getObjValAs? String "code"
+    | return errorResponse "proveFile: missing 'code' field or it is not a string"
+  PastaLean.tasteWinnersRef.set #[]
+  let src := stripImports code
+  let inputCtx := Parser.mkInputContext src "<proveFile>"
+  let cmdState := Command.mkState env {} {}
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx {} cmdState
+  let winners ← PastaLean.tasteWinnersRef.get
+  let hasErrors := frontendState.commandState.messages.hasErrors
+  pure <| Json.mkObj [
+    ("result", Json.bool true),
+    ("winners", Json.arr (winners.map Json.str)),
+    ("hasErrors", Json.bool hasErrors)
+  ]
+
 def handleTaskJson (jsonTask : Json) (ctx : Core.Context) (env : Environment) : IO Json := do
   let .ok task := jsonTask.getObjValAs? String "task"
     | return errorResponse "Invalid JSON: missing 'task' field or it is not a string"
   match task with
   | "translate" => runTranslateTask jsonTask ctx env
+  | "proveFile" => runProveFileTask jsonTask env
   | _ => pure <| errorResponse s!"Unknown task: {task}"
 
 def handleTaskString (payload : String) (ctx : Core.Context) (env : Environment) : IO Json := do

@@ -237,6 +237,94 @@ rests only on `propext, Classical.choice, Quot.sound` (no `sorry`).
 
 ---
 
+## 8b. In-source proofs: `assert` → `theorem` / `have`
+
+The companion file above is hand-written. You can also put the obligation **in the Python source**
+as an `assert`: the transpiler turns it into a Lean proof obligation discharged by `taste?` (a
+tactic that tries a list of candidates and falls back to `sorry`). These exist only in the prove
+(`--mode prove`, `ℚ`) build — the runnable twin (`--mode run`, or the `'rn` twin emitted by the
+default `--mode both`) drops them.
+
+The load-bearing rule: **an `assert` keeps its function non-monadic.** A proof obligation buried in
+`Id.run do` loses the leverage `ring` / `nlinarith` / `taste?` need, so assert-bearing functions
+stay pure terms (a `let`-chain ending in the obligation), never a `do`-block. And the obligation is
+lowered as a **`Prop`**, not a `Bool`: `==` becomes `=`, `<` / `≤` become real order relations — no
+`decide`, no `= true`.
+
+**Three shapes become a named `theorem`; everything else is a non-monadic `def` with `have`s:**
+
+**1. A lone `assert` → a named `theorem`.** A function whose entire body is one `assert`
+(comments/docstrings aside) becomes a top-level `theorem`: the parameters are the
+universally-quantified variables, the assert's test is the proposition.
+
+**1b. Pure `let`-bindings then one obligation → a named `theorem` (with the lets in the statement).**
+A body that is some plain `let`-bindings (fresh names, no reassignment) followed by a *single*
+obligation — a lone `assert C` **or** an `if H: assert C` — also promotes. The bindings thread into
+the statement as `∀ …, let x := …; (H → )C`, keeping the intermediate names, and the guard (if any)
+becomes the hypotheses just as in shape 2. (This is `step_mass_balance` in `pk_model.py`.) It fires
+*only* on a pure body: any IO/`raise`/`try`, loop, mutation, or early return makes the function
+monadic and it stays a `def`. So shapes 1, 1b, and 2 are one rule: *optional pure `let`-prefix + one
+obligation (`assert` or `if`-guarded `assert`)*.
+
+```python
+def scale_preserves_total(xs: list[float], c: float):
+    assert sum(scaled(xs, c)) == c * sum(xs)
+```
+→ `theorem scale_preserves_total : ∀ (xs : List ℚ) (c : ℚ), … = … := by taste?`
+
+This is the form to reach for when you want a **named, reusable** lemma — it reads as a first-class
+theorem, and the run twin simply drops it.
+
+**2. `if H: assert C` → a theorem with hypotheses.** A bare `assert` leaves every parameter
+unconstrained, but most invariants only hold under preconditions. Guard the assert with an `if`: the
+guard becomes the theorem's hypotheses, and a conjunction is curried into separate named ones.
+
+```python
+def discount_never_raises_price(price: float, rate: float):
+    if price >= 0 and rate >= 0:
+        assert discounted(price, rate) <= price
+```
+→ `theorem … : ∀ (price rate : ℚ), price ≥ 0 → rate ≥ 0 → discounted price rate ≤ price := by taste?`
+
+The `if`-guard is exactly the `(h1 : …) (h2 : …)` hypothesis list you'd otherwise write by hand —
+`taste?` `intro`s them and hands them to `nlinarith`. The correspondence is one-to-one: **every
+hypothesis in the generated Lean theorem comes from one conjunct of the Python `if`** — a guard
+`if H1 and H2 and H3:` becomes the curried chain `H1 → H2 → H3 → C`. (Only these two shapes — a lone
+`assert`, or `if <guard>: assert` with no `else` — are promoted to a `theorem`.)
+
+**3. Anything else → a non-monadic `def` with in-body `have`s.** Two (or more) asserts, or
+*non-`let` statements* alongside an assert, do **not** become a theorem (a single assert preceded by
+only pure `let`s does — see 1b). The function stays an ordinary, **still non-monadic** `def`, and each
+assert becomes an anonymous `have ht : … := by taste?` threaded through the body — never `Id.run do`.
+*Even two bare asserts stay a `def` with two `have`s.* Handy for an inline sanity check:
+
+```python
+def step_conserves(x: float, v: float, dt: float):
+    x_next = x + v * dt
+    assert x_next - x == v * dt
+```
+→ a pure `let x_next := …; have ht : … := by taste?` (no `Id.run do`). Lean still checks it, but it's
+an anonymous `have`, not an externally-referenceable named lemma.
+
+**Helper asserts for hard proofs.** Sequential `have`s thread top-to-bottom, so **each assert sees the
+earlier ones as local hypotheses** — and `taste?`'s closers (`linarith`, `grind +locals`, …) use local
+hypotheses. So when one obligation is too hard for `taste?` alone (it needs a certificate the closers
+can't synthesize — e.g. a degree-4 sum-of-squares), precede it with **helper asserts** stating the
+intermediate facts; the final assert then composes them cheaply. Cauchy–Schwarz `(a·b)² ≤ |a|²|b|²` is
+out of reach of bare `nlinarith`, but stating Lagrange's identity (`|a×b|² + (a·b)² = |a|²|b|²`) and
+`|a×b|² ≥ 0` as two helper asserts first leaves a one-line `linarith` for the conclusion (see
+`example_scripts/showcase/orbital/orbital_model.py`). This is more reliable than exposing siblings as
+lemmas, since local hypotheses skip the term-instantiation guessing that `grind` would otherwise need.
+
+**Rule of thumb.** Want a named, reusable theorem → make the property its **own** function with a
+single `assert` (use `if H: assert C` when it needs preconditions). Want an inline check over
+intermediates → put the `assert` **inside** the function and accept an anonymous `have`. `assert`
+(in-source) and the companion `*_theorems.lean` (§8) are complementary: asserts keep the obligation
+next to the code and auto-discharge the routine ones; the companion file is for invariants you want
+stated independently over `ℝ`, or proved with a bespoke tactic.
+
+---
+
 ## 9. Checklist & anti-patterns
 
 **Rules for maximum Tier 0 (provable)**

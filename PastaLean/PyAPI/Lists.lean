@@ -121,29 +121,26 @@ theorem pyAppend_length_increase_one : ∀ (xs : List α) (elem : α), (pyAppend
   | x :: xs, elem => by simp [pyAppend, pyListAppend]
 
 theorem pyListExtend_length (xs ys : List α) : (pyListExtend xs ys).length = xs.length + ys.length := by
-  unfold pyListExtend
-  simp
+  grind only [pyListExtend, = List.length_append]
 
 theorem pyListPop_length_decrease_one (xs : List α) (idx : Int) (h : 0 <= idx) (h' : (idx.toNat) < xs.length) :
   pyListPop xs idx none|>.2.length = xs.length - 1 := by
-  unfold pyListPop
-  simp [h, h']
-  grind
+  grind only [pyListPop, = List.length_eraseIdx]
 
 theorem pyListCount_increase_one [DecidableEq α] (xs : List α) (elem : α) :
   pyListCount (pyListAppend xs elem) elem = pyListCount xs elem + 1 := by
-    unfold pyListCount
-    simp [PyListCount, pyListAppend]
+    grind only [pyListCount, pyListAppend, PyListCount, = List.count_append, = List.count_cons,
+      = List.count_nil]
 
 theorem pyListCount_extend [DecidableEq α] (xs ys : List α) (elem : α) :
   pyListCount (pyListExtend xs ys) elem = pyListCount xs elem + pyListCount ys elem := by
-    unfold pyListExtend pyListCount
-    simp [PyListCount]
+    grind only [pyListExtend, pyListCount, PyListCount, = List.count_append]
 
 theorem pyInsert_length_increase_one (xs : List α) (idx : Int) (elem : α) :
   (pyInsert xs idx elem).length = xs.length + 1 := by
     unfold pyInsert pyListInsert
-    grind
+    grind only [usr List.append_assoc, = List.length_append, = List.cons_append, = List.length_drop,
+      = List.length_take, = List.length_cons, = min_def, = List.length_nil, #ecfa, #80a4]
 
 theorem pyInsert_eq_append (xs : List α) (idx : Int) (elem : α) (h : idx >= xs.length) :
   pyInsert xs idx elem = pyAppend xs elem := by

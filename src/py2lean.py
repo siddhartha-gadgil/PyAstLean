@@ -1144,6 +1144,34 @@ class LeanBackendClient:
             self.close()
             return self._one_shot_request(ast_json, target, check)
 
+    def prove_file(self, code, timeout=600.0):
+        """Elaborate an assembled generated file in the WARM backend so `taste?` searches each
+        assert; return the parsed JSON carrying the ordered list of winning tactic strings
+        (`winners`). Uses a long timeout because this elaborates the whole program — unlike
+        `request`'s 5s budget, which a `nlinarith`/`grind` search would blow past."""
+        self.start()
+        assert self.proc is not None and self.proc.stdin is not None and self.proc.stdout is not None
+        json_task = json.dumps({"task": "proveFile", "code": code}, separators=(",", ":"))
+        try:
+            self.proc.stdin.write(json_task + "\n")
+            self.proc.stdin.flush()
+        except BrokenPipeError:
+            self.close()
+            return None
+        ready, _, _ = select.select([self.proc.stdout], [], [], timeout)
+        if not ready:
+            logger.debug("proveFile timed out after %ss; leaving taste? in place.", timeout)
+            return None
+        line = self.proc.stdout.readline()
+        if not line:
+            self.close()
+            return None
+        try:
+            return json.loads(line.strip())
+        except json.JSONDecodeError as err:
+            logger.debug("proveFile returned invalid JSON: %s", err)
+            return None
+
     def __enter__(self):
         self.start()
         return self
@@ -1163,6 +1191,58 @@ def invoke_lean_backend(ast_json, target, check=True, client=None):
         return backend.request(ast_json, target, check)
     except Exception as err:
         return {"result": False, "error": str(err)}
+
+
+def _splice_taste_winners(code, winners):
+    """Replace each `taste?` proof obligation in `code`, in order, with its winning tactic string
+    from `winners` (or `sorry` if the list is short).
+
+    Comment/string aware: `taste?` ALSO shows up inside user docstrings/comments (e.g. a docstring
+    that mentions ``:= by taste?``), which are not elaborated and so produce no winner. Replacing
+    those would corrupt the comment AND consume a winner meant for a real assert, misaligning the
+    rest. So we only substitute `taste?` occurring in actual code — outside `--` line comments,
+    `/- -/` (nestable) block comments, and `"..."` string literals."""
+    out = []
+    i, n, wi = 0, len(code), 0
+    in_line_comment = False
+    block_depth = 0
+    in_string = False
+    while i < n:
+        two = code[i:i + 2]
+        c = code[i]
+        if in_line_comment:
+            out.append(c); i += 1
+            if c == "\n":
+                in_line_comment = False
+            continue
+        if block_depth > 0:
+            if two == "/-":
+                block_depth += 1; out.append(two); i += 2; continue
+            if two == "-/":
+                block_depth -= 1; out.append(two); i += 2; continue
+            out.append(c); i += 1; continue
+        if in_string:
+            if c == "\\" and i + 1 < n:
+                out.append(code[i:i + 2]); i += 2; continue
+            if c == '"':
+                in_string = False
+            out.append(c); i += 1; continue
+        # normal code context
+        if two == "--":
+            in_line_comment = True; out.append(two); i += 2; continue
+        if two == "/-":
+            block_depth = 1; out.append(two); i += 2; continue
+        if c == '"':
+            in_string = True; out.append(c); i += 1; continue
+        if code.startswith("taste?", i):
+            # Replace with the recorded winner, or `sorry` if none (a `taste?` left in the file would
+            # re-run the search every compile and can time out — `sorry` keeps the file compiling).
+            out.append(winners[wi] if wi < len(winners) else "sorry")
+            wi += 1
+            i += len("taste?")
+            continue
+        out.append(c); i += 1
+    return "".join(out)
 
 def _references_name(node, target):
     """Recursively check whether a JSON subtree references a `Name` with id `target`."""
@@ -1428,7 +1508,7 @@ def _collect_user_names(body):
     return sorted(names)
 
 
-def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, mode="both"):
+def translate_to_lean(source_code, target="term", filepath = None, imports_add = True, best_effort=False, mode="both", prove_asserts=True):
     """Translate Python source to Lean via JSON IR and the Lean backend executable.
 
     `mode` selects the numeric semantics: "prove" (exact ℚ/ℝ, provable), "run" (Float, runnable), or
@@ -1539,12 +1619,25 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "open PastaLean",
                     "open Libraries",
                     "",
-                    "set_option linter.all false" # shut up warnings which annoyingly popup in output
-                    "\n\n",
+                    "set_option linter.all false",  # shut up warnings which annoyingly popup in output
+                    # Give `taste?`'s proof search some room beyond the default 200000 heartbeats.
+                    "set_option maxHeartbeats 800000",
+                    "\n",
                 ]
                 full_code = "\n".join(preamble_lines) + body_code
             else:
                 full_code = body_code
+            # Prove-and-replace pass: elaborate the assembled file in the warm backend so `taste?`
+            # searches each assert, then splice the concrete winning tactic (or `sorry`) over each
+            # `taste?`. Non-destructive — on any failure we leave the `taste?` obligations in place.
+            if prove_asserts and "taste?" in full_code:
+                resp = client.prove_file(full_code)
+                if resp and resp.get("result") and isinstance(resp.get("winners"), list):
+                    full_code = _splice_taste_winners(full_code, resp["winners"])
+                    if resp.get("hasErrors"):
+                        logger.warning("proveFile reported elaboration errors; some asserts may be left `sorry`.")
+                else:
+                    logger.warning("proveFile pass unavailable/failed; leaving `taste?` obligations in place.")
             return {"result": True, f"lean_{target}": full_code}
 
         if len(body) == 1:
@@ -1610,6 +1703,15 @@ def main(argv=None):
              "— the provable version under its name and a runnable twin suffixed 'rn "
              "(e.g. `main'rn`, `sigmoid'rn`).",
     )
+    parser.add_argument(
+        "--prove-asserts",
+        dest="prove_asserts",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run the prove-and-replace pass on each assert: elaborate in the warm backend and "
+             "splice the concrete winning tactic — or `sorry` — over each `:= by taste?`. Default: "
+             "on. Use --no-prove-asserts to leave the obligations as `:= by taste?`.",
+    )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -1619,7 +1721,7 @@ def main(argv=None):
 
     source_code = Path(file_path).read_text(encoding="utf-8")
     result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
-                               mode=args.mode)
+                               mode=args.mode, prove_asserts=args.prove_asserts)
 
     if isinstance(result, dict):
         if result.get("result") is False:

@@ -5,6 +5,7 @@ open PastaLean
 open Libraries
 
 set_option linter.all false
+set_option maxHeartbeats 800000
 
 /-
 A pharmacokinetic (PK) drug-concentration simulator -- the dynamical core PastaLean
@@ -29,21 +30,25 @@ def depot_rate := fun (ka : Rat) ↦ fun (depot : Rat) ↦
   -/
   -ka *ₚ depot
 
+attribute [simp, taste_ingr] depot_rate
+
 def depot_rate'rn := fun (ka : Float) ↦ fun (depot : Float) ↦
   /-
   dD/dt -- drug leaving the gut depot by absorption.
   -/
   -ka *ₚ depot
 
-def central_rate := fun (ka : Rat) ↦ fun (ke : Rat) ↦ fun (k12 : Rat) ↦ fun (k21 : Rat) ↦ fun (depot : Rat) ↦
+def central_rate := fun (ka : Rat) ↦ fun ke ↦ fun (k12 : Rat) ↦ fun (k21 : Rat) ↦ fun (depot : Rat) ↦
   fun (central : Rat) ↦ fun (periph : Rat) ↦
   /-
   dC/dt -- absorption in, elimination out, exchange with the peripheral compartment.
   -/
   ka *ₚ depot -ₚ ke *ₚ central -ₚ k12 *ₚ central +ₚ k21 *ₚ periph
 
-def central_rate'rn := fun (ka : Float) ↦ fun (ke : Float) ↦ fun (k12 : Float) ↦ fun (k21 : Float) ↦
-  fun (depot : Float) ↦ fun (central : Float) ↦ fun (periph : Float) ↦
+attribute [simp, taste_ingr] central_rate
+
+def central_rate'rn := fun (ka : Float) ↦ fun ke ↦ fun (k12 : Float) ↦ fun (k21 : Float) ↦ fun (depot : Float) ↦
+  fun (central : Float) ↦ fun (periph : Float) ↦
   /-
   dC/dt -- absorption in, elimination out, exchange with the peripheral compartment.
   -/
@@ -54,6 +59,8 @@ def periph_rate := fun (k12 : Rat) ↦ fun (k21 : Rat) ↦ fun (central : Rat) �
   dP/dt -- distribution into and back out of the tissue compartment.
   -/
   k12 *ₚ central -ₚ k21 *ₚ periph
+
+attribute [simp, taste_ingr] periph_rate
 
 def periph_rate'rn := fun (k12 : Float) ↦ fun (k21 : Float) ↦ fun (central : Float) ↦ fun (periph : Float) ↦
   /-
@@ -67,6 +74,8 @@ def concentration := fun (amount : Rat) ↦ fun (vol : Rat) ↦
   -/
   amount /ₚ vol
 
+attribute [simp, taste_ingr] concentration
+
 def concentration'rn := fun (amount : Float) ↦ fun (vol : Float) ↦
   /-
   Convert a compartment amount (mg) to a concentration (mg/L).
@@ -79,11 +88,88 @@ noncomputable def body_load := fun (depot : Rat) ↦ fun (central : Rat) ↦ fun
   -/
   Libraries.scipy.pyScipyNormR [depot, central, periph]
 
+attribute [simp] body_load
+
 def body_load'rn := fun (depot : Float) ↦ fun (central : Float) ↦ fun (periph : Float) ↦
   /-
   Total body drug load as the Euclidean norm of the compartment vector (via scipy).
   -/
   Libraries.scipy.pyScipyNorm [depot, central, periph]
+
+-- --- Provable invariants of the model (transpiled to `theorem ... := by taste?`) ---
+-- Each function's parameters are the universally-quantified variables; the `assert` is the property.
+-- These are proof obligations: in the prove (ℚ) version they become `have/theorem ... := by taste?`;
+-- the runnable version drops them.
+@[taste_ingr]
+theorem mass_balance :
+    ∀ (ka : Rat),
+      ∀ (ke : Rat),
+        ∀ (k12 : Rat),
+          ∀ (k21 : Rat),
+            ∀ (depot : Rat),
+              ∀ (central : Rat),
+                ∀ (periph : Rat),
+                  depot_rate ka depot +ₚ central_rate ka ke k12 k21 depot central periph +ₚ
+                      periph_rate k12 k21 central periph =
+                    -ke *ₚ central :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
+
+@[taste_ingr]
+theorem distribution_conserves :
+    ∀ (k12 : Rat),
+      ∀ (k21 : Rat),
+        ∀ (central : Rat),
+          ∀ (periph : Rat), -k12 *ₚ central +ₚ k21 *ₚ periph +ₚ (k12 *ₚ central -ₚ k21 *ₚ periph) = (0 : Int) :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]
+
+@[taste_ingr]
+theorem conserved_without_elimination :
+    ∀ (ka : Rat),
+      ∀ (k12 : Rat),
+        ∀ (k21 : Rat),
+          ∀ (depot : Rat),
+            ∀ (central : Rat),
+              ∀ (periph : Rat),
+                depot_rate ka depot +ₚ central_rate ka (0 : Int) k12 k21 depot central periph +ₚ
+                    periph_rate k12 k21 central periph =
+                  (0 : Int) :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
+
+@[taste_ingr]
+theorem step_mass_balance :
+    ∀ (ka : Rat),
+      ∀ (ke : Rat),
+        ∀ (k12 : Rat),
+          ∀ (k21 : Rat),
+            ∀ (depot : Rat),
+              ∀ (central : Rat),
+                ∀ (periph : Rat),
+                  ∀ (dt : Rat),
+                    let new_depot := depot +ₚ depot_rate ka depot *ₚ dt
+                    let new_central := central +ₚ central_rate ka ke k12 k21 depot central periph *ₚ dt
+                    let new_periph := periph +ₚ periph_rate k12 k21 central periph *ₚ dt
+                    new_depot +ₚ new_central +ₚ new_periph = depot +ₚ central +ₚ periph -ₚ ke *ₚ central *ₚ dt :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
+
+@[taste_ingr]
+theorem depot_nonincreasing :
+    ∀ (ka : Rat), ∀ (depot : Rat), ka ≥ (0 : Int) → depot ≥ (0 : Int) → depot_rate ka depot ≤ (0 : Int) := by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]
+
+@[taste_ingr]
+theorem total_nonincreasing :
+    ∀ (ka : Rat),
+      ∀ (ke : Rat),
+        ∀ (k12 : Rat),
+          ∀ (k21 : Rat),
+            ∀ (depot : Rat),
+              ∀ (central : Rat),
+                ∀ (periph : Rat),
+                  ke ≥ (0 : Int) →
+                    central ≥ (0 : Int) →
+                      depot_rate ka depot +ₚ central_rate ka ke k12 k21 depot central periph +ₚ
+                          periph_rate k12 k21 central periph ≤
+                        (0 : Int) :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; nlinarith
 
 noncomputable def main' :=
   ((do
@@ -129,6 +215,8 @@ noncomputable def main' :=
         else
           let _ := ()) :
     IO _)
+
+attribute [simp] main'
 
 def main''rn :=
   ((do

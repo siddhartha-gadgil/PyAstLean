@@ -5,6 +5,7 @@ open PastaLean
 open Libraries
 
 set_option linter.all false
+set_option maxHeartbeats 800000
 
 def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List Rat)) ↦
   ((do
@@ -34,6 +35,8 @@ def process_data := fun (data : List (List Rat)) ↦ fun (weights : List (List R
         else
           throw caught) :
     PastaLean.PyExcept _)
+
+attribute [simp] process_data
 
 def process_data'rn : List (List Float) → List (List Float) → PastaLean.PyExcept (List (List Float)) :=
   fun (data : List (List Float)) ↦ fun (weights : List (List Float)) ↦ do
@@ -89,6 +92,8 @@ def run_example :=
       -- This should trigger the ValueError in np.matmul(1x3, 2x2)
       let _ ← process_data invalid_data weights) :
     PastaLean.PyExcept _)
+
+attribute [simp] run_example
 
 def run_example'rn :=
   ((do

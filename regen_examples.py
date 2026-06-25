@@ -79,6 +79,7 @@ def compile_lean(path: Path, timeout: int) -> str | None:
 def process(py: Path, in_place: bool, timeout: int) -> tuple[str, Path, str]:
     """Returns (status, py, detail). status in {OK, CONVERT_FAIL, COMPILE_FAIL}."""
     lean, cerr = convert(py)
+    lean = "" if lean is None else lean
     if cerr:
         return "CONVERT_FAIL", py, cerr
     if in_place:

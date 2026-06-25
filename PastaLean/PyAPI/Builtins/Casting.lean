@@ -21,7 +21,7 @@ instance : PyIntCast Int where
   pyInt x := x
 
 /-- `int(x)` on an exact-mode real number (a transcendental result). `ℝ` is noncomputable, so this
-is `noncomputable` and only lets the program elaborate — regenerate with `--approx` to evaluate.
+is `noncomputable` and only lets the program elaborate — regenerate with `--mode run` to evaluate.
 Uses the floor `⌊x⌋`. -/
 noncomputable instance : PyIntCast ℝ where
   pyInt x := ⌊x⌋
@@ -133,7 +133,7 @@ instance : PyFloatCast String where
 In the default (exact) numeric mode `float(x)` lowers to `pyRat`, producing an exact rational.
 Notably a decimal string parses *exactly* (`float("0.1") = 1/10`), and `int`/`bool`/`Rat` inputs
 coerce losslessly. `inf`/`nan` have no `ℚ` value, so the string parser degrades them to `0`
-(exact mode does not model them — use `--approx` for `float('inf')`). -/
+(exact mode does not model them — use `--mode run` for `float('inf')`). -/
 
 /-- Typeclass for exact-mode `float(...)` coercions producing `ℚ`. -/
 class PyRatCast (α : Type) where
