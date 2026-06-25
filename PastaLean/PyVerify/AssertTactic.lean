@@ -29,7 +29,7 @@ def tasteProfile : Profile where
     ← `(tactic| omega),
     ← `(tactic| linarith),
     ← `(tactic| nlinarith),
-    ← `(tactic| grind +locals),
+    ← `(tactic| grind +locals +suggestions),
     ← `(tactic| aesop)
   ]
   winnersRef? := some tasteWinnersRef

@@ -48,20 +48,24 @@ def trySimplifier (visited : List (List Expr)) (budget : Nat) (tac : TSyntax `ta
       return none
     return some (← tacToString tac, after)
 
-/-- Try a *closer*: commit only if it discharges **all** open goals (and not via `sorry`). A tactic
-that merely normalizes the goal without closing it is rejected, so it never lands in the proof. -/
+/-- Try a *closer*: commit only if it discharges **at least one** open goal (strictly fewer goals
+remain), without a `sorry`-closure. A tactic that merely normalizes a goal without closing it is
+rejected, so it never lands in the proof. Closers act on the main goal, so this closes it and `;`
+later advances to the next — letting the close loop handle several goals as `c1; c2; …`. -/
 def tryCloser (budget : Nat) (tac : TSyntax `tactic) : TacticM (Option String) := do
   let beforeGoals ← getGoals
   let saved ← saveState
   try
     withBudget budget (withoutRecover (evalTactic tac))
-    unless (← getGoals).isEmpty do
+    let afterGoals ← getGoals
+    unless afterGoals.length < beforeGoals.length do
       saved.restore
       return none
     for g in beforeGoals do
-      if (← instantiateMVars (mkMVar g)).hasSorry then
-        saved.restore
-        return none
+      unless afterGoals.contains g do
+        if (← instantiateMVars (mkMVar g)).hasSorry then
+          saved.restore
+          return none
     return some (← tacToString tac)
   catch _ =>
     saved.restore
@@ -76,7 +80,7 @@ def raceSimplifiers (visited : List (List Expr)) (budget : Nat) (cands : Array (
     | none   => pure ()
   return none
 
-/-- Race closers; first that fully closes the goal wins. -/
+/-- Race closers; first that discharges ≥1 goal wins. -/
 def raceClosers (budget : Nat) (cands : Array (TSyntax `tactic)) : TacticM (Option String) := do
   for tac in cands do
     match ← tryCloser budget tac with
@@ -84,11 +88,27 @@ def raceClosers (budget : Nat) (cands : Array (TSyntax `tactic)) : TacticM (Opti
     | none   => pure ()
   return none
 
+/-- Close the open goals one at a time (the `all_goals`-style fan-out): each round, the first closer
+that discharges ≥1 goal is committed and recorded; a goal that resists every closer is `sorry`d and
+we move on. So four goals each closed by `grind` record `grind; grind; grind; grind`, and a mix where
+the middle goal resists records `grind; sorry; grind`. The loop always ends with no open goals. -/
+partial def closeAll (budget : Nat) (closers : TacticM (Array (TSyntax `tactic))) (fuel : Nat)
+    (acc : Array String) : TacticM (Array String) := do
+  if (← getGoals).isEmpty then return acc
+  if fuel == 0 then
+    evalTactic (← `(tactic| all_goals sorry))
+    return (acc.push "all_goals sorry")
+  match ← raceClosers budget (← closers) with
+  | some r => closeAll budget closers (fuel - 1) (acc.push r)
+  | none =>
+    evalTactic (← `(tactic| sorry))
+    closeAll budget closers (fuel - 1) (acc.push "sorry")
+
 /-- The two-phase search. Each round: re-derive the profile's tactics against the current goal,
 greedily commit one simplifier step if any makes progress (recursing so simplification runs to a
-fixpoint, with cycle detection), and only once simplification stalls try the closers — the first
-that fully discharges the goal wins. Stops when simplification stalls and no closer closes; the
-caller then records the committed prefix and `sorry`s the residual. `fuel` bounds simplifier steps. -/
+fixpoint, with cycle detection), and only once simplification stalls run the close loop, which
+discharges every remaining goal one at a time. Stops when simplification stalls and a goal resists
+every closer; the caller records the committed prefix and `sorry`s the residual. `fuel` bounds steps. -/
 partial def search (budget : Nat) (fuel : Nat) (p : Profile) (visited : List (List Expr))
     (acc : Array String) : TacticM (Array String) := do
   if fuel == 0 then return acc
@@ -98,9 +118,11 @@ partial def search (budget : Nat) (fuel : Nat) (p : Profile) (visited : List (Li
   | some (r, after) =>
     return (← search budget (fuel - 1) p (after :: visited) (acc.push r))
   | none =>
-    match ← raceClosers budget (← p.closers) with
-    | some r => return (acc.push r)
-    | none   => return acc
+    let closeSeq ← closeAll budget p.closers ((← getGoals).length + 1) #[]
+    -- a close phase that closed nothing (all `sorry`) over several goals reads cleaner as one
+    -- `all_goals sorry` than `sorry; sorry; …`
+    let closeSeq := if closeSeq.size > 1 && closeSeq.all (· == "sorry") then #["all_goals sorry"] else closeSeq
+    return acc ++ closeSeq
 
 /-- Drive a portfolio `p` on the current goal(s): search, build the proof string from the committed
 candidates (or a `…; sorry` prefix when only partial progress was made), record it in
@@ -115,32 +137,21 @@ def runPastafolio (p : Profile) (stx : Syntax) : TacticM Unit := do
     | n => n
   let budget := p.budget raw
   withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) do
-    let entry ← saveState
     let used ← search budget p.fuel p [] #[]
-    -- Fallback: if the simplify-then-close search stalled, try the closers once on the *original*
-    -- goal. Simplifiers unfold the `[simp]` leaves, which erases the E-match patterns the
-    -- `@[taste_ingr]` sibling lemmas need, so `grind` can only compose them on the un-simplified goal.
+    -- `search` discharges every goal (a closer, or an inline `sorry` for one that resists every
+    -- closer). The only way goals remain is simplifier-fuel exhaustion — bulk-`sorry` those.
     let used ←
       if (← getGoals).isEmpty then pure used
       else do
-        entry.restore
-        match ← raceClosers budget (← p.closers) with
-        | some r => pure #[r]
-        | none   => pure used
-    let closed := (← getGoals).isEmpty
-    -- `;`-sequence the committed tactics. No surrounding parens: a `by t1; t2; t3` block parses
-    -- fine both as a top-level `theorem … := by …` and as an in-body `have … := by …`.
-    let proof :=
-      if closed then
-        String.intercalate "; " used.toList
-      else
-        String.intercalate "; " (used.toList ++ ["sorry"])
+        evalTactic (← `(tactic| all_goals sorry))
+        pure (used.push "all_goals sorry")
+    -- `;`-sequence the committed tactics. No surrounding parens: a `by t1; t2; t3` block parses fine
+    -- both as a top-level `theorem … := by …` and as an in-body `have … := by …`.
+    let proof := String.intercalate "; " used.toList
     if let some ref := p.winnersRef? then
       ref.modify (·.push proof)
     match Lean.Parser.runParserCategory (← getEnv) `tactic proof with
     | .ok s => addSuggestion stx (⟨s⟩ : TSyntax `tactic) (origSpan? := stx)
     | .error _ => pure ()
-    unless closed do
-      evalTactic (← `(tactic| all_goals sorry))
 
 end PastaLean.Pastafolio
