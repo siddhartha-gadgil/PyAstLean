@@ -251,11 +251,17 @@ stay pure terms (a `let`-chain ending in the obligation), never a `do`-block. An
 lowered as a **`Prop`**, not a `Bool`: `==` becomes `=`, `<` / `≤` become real order relations — no
 `decide`, no `= true`.
 
-**Exactly two shapes become a named `theorem`; everything else is a non-monadic `def` with `have`s:**
+**Three shapes become a named `theorem`; everything else is a non-monadic `def` with `have`s:**
 
 **1. A lone `assert` → a named `theorem`.** A function whose entire body is one `assert`
 (comments/docstrings aside) becomes a top-level `theorem`: the parameters are the
 universally-quantified variables, the assert's test is the proposition.
+
+**1b. Pure `let`-bindings then one `assert` → a named `theorem` (with the lets in the statement).**
+A body that is some plain `let`-bindings (fresh names, no reassignment) followed by a *single*
+`assert` also promotes — the bindings thread into the statement as `∀ …, let x := …; P`, keeping the
+intermediate names. (This is `step_mass_balance` in `pk_model.py`.) It fires *only* on a pure body:
+any IO/`raise`/`try`, loop, mutation, or early return makes the function monadic and it stays a `def`.
 
 ```python
 def scale_preserves_total(xs: list[float], c: float):
@@ -284,10 +290,10 @@ hypothesis in the generated Lean theorem comes from one conjunct of the Python `
 `assert`, or `if <guard>: assert` with no `else` — are promoted to a `theorem`.)
 
 **3. Anything else → a non-monadic `def` with in-body `have`s.** Two (or more) asserts, or
-statements alongside an assert, do **not** become a theorem. The function stays an ordinary,
-**still non-monadic** `def`, and each assert becomes an anonymous `have ht : … := by taste?` threaded
-through the body — never `Id.run do`. *Even two bare asserts stay a `def` with two `have`s.* Handy
-for an inline sanity check over locally-computed values:
+*non-`let` statements* alongside an assert, do **not** become a theorem (a single assert preceded by
+only pure `let`s does — see 1b). The function stays an ordinary, **still non-monadic** `def`, and each
+assert becomes an anonymous `have ht : … := by taste?` threaded through the body — never `Id.run do`.
+*Even two bare asserts stay a `def` with two `have`s.* Handy for an inline sanity check:
 
 ```python
 def step_conserves(x: float, v: float, dt: float):

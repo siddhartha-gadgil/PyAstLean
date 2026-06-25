@@ -135,28 +135,21 @@ theorem conserved_without_elimination :
                   (0 : Int) :=
   by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
 
-def step_mass_balance := fun (ka : Rat) ↦ fun (ke : Rat) ↦ fun (k12 : Rat) ↦ fun (k21 : Rat) ↦ fun (depot : Rat) ↦
-  fun (central : Rat) ↦ fun (periph : Rat) ↦ fun (dt : Rat) ↦
-  /-
-  One forward-Euler step loses exactly the eliminated amount ke*central*dt (no spurious leak).
-  -/
-  let new_depot := depot +ₚ depot_rate ka depot *ₚ dt
-  let new_central := central +ₚ central_rate ka ke k12 k21 depot central periph *ₚ dt
-  let new_periph := periph +ₚ periph_rate k12 k21 central periph *ₚ dt
-  have ht_1 : new_depot +ₚ new_central +ₚ new_periph = depot +ₚ central +ₚ periph -ₚ ke *ₚ central *ₚ dt := by simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
-  ()
-
-attribute [simp] step_mass_balance
-
-def step_mass_balance'rn := fun (ka : Float) ↦ fun (ke : Float) ↦ fun (k12 : Float) ↦ fun (k21 : Float) ↦
-  fun (depot : Float) ↦ fun (central : Float) ↦ fun (periph : Float) ↦ fun (dt : Float) ↦
-  /-
-  One forward-Euler step loses exactly the eliminated amount ke*central*dt (no spurious leak).
-  -/
-  let new_depot := depot +ₚ depot_rate'rn ka depot *ₚ dt
-  let new_central := central +ₚ central_rate'rn ka ke k12 k21 depot central periph *ₚ dt
-  let new_periph := periph +ₚ periph_rate'rn k12 k21 central periph *ₚ dt
-  ()
+@[taste_ingr]
+theorem step_mass_balance :
+    ∀ (ka : Rat),
+      ∀ (ke : Rat),
+        ∀ (k12 : Rat),
+          ∀ (k21 : Rat),
+            ∀ (depot : Rat),
+              ∀ (central : Rat),
+                ∀ (periph : Rat),
+                  ∀ (dt : Rat),
+                    let new_depot := depot +ₚ depot_rate ka depot *ₚ dt
+                    let new_central := central +ₚ central_rate ka ke k12 k21 depot central periph *ₚ dt
+                    let new_periph := periph +ₚ periph_rate k12 k21 central periph *ₚ dt
+                    new_depot +ₚ new_central +ₚ new_periph = depot +ₚ central +ₚ periph -ₚ ke *ₚ central *ₚ dt :=
+  by intros; simp_all (config := { zetaDelta := true }) [taste_ingr]; ring
 
 @[taste_ingr]
 theorem depot_nonincreasing :

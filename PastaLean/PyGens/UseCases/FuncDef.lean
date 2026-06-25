@@ -346,6 +346,31 @@ def functionCommandWithEffectSignature? (nameIdent : TSyntax `ident)
   else
     return none
 
+/-- Is the body a pure `let`-chain ending in exactly one `assert` (and nothing else)? Returns the
+`let` `Assign` statements (in order) and the assert's `test`, or `none`. Conservative — requires no
+IO/exception effect, and every pre-assert statement an `Assign` to a distinct fresh simple `Name`
+(no reassignment, no parameter mutation, no loops/control flow). That is exactly the shape that
+lowers to a pure term, so a `while`/`raise`/`print` body can never match — those carry an IO/except
+effect or a non-`Assign` statement. A *single* assert only: two or more stay an in-body-`have` `def`. -/
+def pureLetChainAssert? (paramNames : Array String) (body : Array Json) (substantive : Array Json) :
+    Option (Array Json × Json) := Id.run do
+  if substantive.size < 2 then return none
+  let last := substantive[substantive.size - 1]!
+  if jsonNodeType? last != some "Assert" then return none
+  let .ok test := last.getObjValAs? Json "test" | return none
+  let lets := substantive.pop
+  if lets.any (fun s => jsonNodeType? s == some "Assert") then return none
+  if bodyNeedsIOMonad body || bodyNeedsExceptionMonad body then return none
+  let mut seen : Array String := #[]
+  for s in lets do
+    if jsonNodeType? s != some "Assign" then return none
+    let .ok target := s.getObjVal? "target" | return none
+    if jsonNodeType? target != some "Name" then return none
+    let .ok tname := target.getObjValAs? String "id" | return none
+    if paramNames.contains tname || seen.contains tname then return none
+    seen := seen.push tname
+  return some (lets, test)
+
 @[pygen "FunctionDef"]
 def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -414,6 +439,35 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
               | none => `(∀ $argIdent, $propTy)
           -- `@[taste_ingr]` adds the proved theorem to the simp set, so later `taste?`s can reuse it.
           return ⟨mkNullNode #[(← `(command| @[taste_ingr] theorem $nameIdent : $propTy := by taste?)).raw]⟩
+        -- A pure `let`-chain ending in a single assert (e.g. `step_mass_balance`) becomes a named,
+        -- reusable theorem too: the `let`s thread into the `∀ …, let … ; P` statement, keeping the
+        -- intermediate names. `pureLetChainAssert?` only matches pure bodies, so a monadic body never
+        -- reaches here. Two or more asserts still stay a `def` with in-body `have`s.
+        let paramNames := (← functionArgInfos json).map (fun (id, _) => id.getId.toString)
+        if let some (letJsons, conclJson) := pureLetChainAssert? paramNames bodyArr substantive then
+          if (← getNumericMode) == .approx then return ⟨mkNullNode #[]⟩
+          let argInfos ← functionArgInfos json
+          let thmCmd ← withFreshVariables do
+            for letJson in letJsons do
+              if let .ok target := letJson.getObjVal? "target" then
+                if let .ok tname := target.getObjValAs? String "id" then
+                  addVar tname.toName
+            let mut propTy ← withPropCondition true (getCode conclJson `term)
+            for letJson in letJsons.reverse do
+              let .ok target := letJson.getObjVal? "target" |
+                throwError "let-chain assert: Assign without target"
+              let .ok value := letJson.getObjVal? "value" |
+                throwError "let-chain assert: Assign without value"
+              let targetIdent ← getCode target `ident
+              let valueStx ← getCode value `term
+              propTy ← `(let $targetIdent := $valueStx
+                         $propTy)
+            for (argIdent, ty?) in argInfos.reverse do
+              propTy ← match ty? with
+                | some ty => `(∀ ($argIdent : $ty), $propTy)
+                | none => `(∀ $argIdent, $propTy)
+            `(command| @[taste_ingr] theorem $nameIdent : $propTy := by taste?)
+          return ⟨mkNullNode #[thmCmd.raw]⟩
         -- `_real_fn` (set by the Python per-variable pass) means the function produces or handles an
         -- `ℝ` value → it must be `noncomputable` in exact mode. This is now DECOUPLED from which
         -- floats are `ℝ`: real params carry a per-`arg` `_real` stamp (read in `functionArgInfos`)
