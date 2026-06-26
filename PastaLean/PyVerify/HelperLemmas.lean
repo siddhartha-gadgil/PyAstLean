@@ -37,4 +37,20 @@ theorem pyRange_eq_ofNat (n : Int) : pyRange n = (List.range n.toNat).map Int.of
     forIn (pyRange n) init f = forIn (List.range n.toNat) init (fun (k : Nat) => f (Int.ofNat k)) := by
   rw [pyRange_eq_ofNat, List.forIn_map]
 
+/-- `pyRange stop start` (Python `range(start, stop)`, step 1) is `[start, …, stop-1]` as `Int`. -/
+theorem pyRange_eq_start (stop start : Int) :
+    pyRange stop start = (List.range (stop - start).toNat).map (fun k => start + Int.ofNat k) := by
+  unfold pyRange
+  simp only [gt_iff_lt, List.range_eq_range', show (Int.toNat 1) = 1 from rfl, Int.ediv_one,
+    Int.emod_one, Int.add_zero, if_pos (show (0 : Int) < 1 by norm_num)]
+  rw [coe_list_eq, List.map_map]; rfl
+
+/-- Start-aware reduction: a `for i in range(start, stop)` loop becomes the native `List.range` loop
+with the element `start + index` in the body, so mvcgen knows `i ≥ start`. -/
+@[taste_ingr] theorem pyRange_forIn_start {β : Type} {m : Type → Type} [Monad m] [LawfulMonad m]
+    (stop start : Int) (init : β) (f : Int → β → m (ForInStep β)) :
+    forIn (pyRange stop start) init f
+      = forIn (List.range (stop - start).toNat) init (fun (k : Nat) => f (start + Int.ofNat k)) := by
+  rw [pyRange_eq_start, List.forIn_map]
+
 end PastaLean

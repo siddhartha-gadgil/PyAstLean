@@ -131,13 +131,51 @@ def declaredMutOrder (body : Array Json) : Array String := Id.run do
         if !acc.contains name then acc := acc.push name
   return acc
 
+/-- If accumulator `acc` is updated at the loop-body top level by `acc += e` or `acc = acc + e`,
+return the contribution `e` — used to auto-derive `acc = (cur.prefix.map (fun v => e)).sum` when the
+user gave no `Invariant`. `none` for conditional/other mutations. -/
+def accContribution? (loopBody : Array Json) (acc : String) : Option Json := Id.run do
+  for s in loopBody do
+    match jsonNodeType? s with
+    | some "AugAssign" =>
+      if (s.getObjVal? "target").bind (·.getObjValAs? String "id") == .ok acc
+          && s.getObjValAs? String "op" == .ok "add" then
+        return (s.getObjVal? "value").toOption
+    | some "Assign" =>
+      if (s.getObjVal? "target").bind (·.getObjValAs? String "id") == .ok acc then
+        if let some value := (s.getObjVal? "value").toOption then
+          if jsonNodeType? value == some "BinOp" && value.getObjValAs? String "op" == .ok "add" then
+            match (value.getObjVal? "left").toOption, (value.getObjVal? "right").toOption with
+            | some lj, some rj =>
+              if lj.getObjValAs? String "id" == .ok acc then return some rj
+              if rj.getObjValAs? String "id" == .ok acc then return some lj
+            | _, _ => pure ()
+    | _ => pure ()
+  return none
+
+/-- Does `stmt` early-exit *this* loop (a `return`/`break`, recursing through `if`s but not into a
+nested `for`/`while`, which owns its own exits)? Such a loop threads an extra early-return state, so
+its invariant must use `Invariant.withEarlyReturn` rather than a plain `⇓` bullet. -/
+partial def jsonHasEarlyExit (stmt : Json) : Bool :=
+  match jsonNodeType? stmt with
+  | some "Return" | some "Break" => true
+  | some "For" | some "While" => false
+  | _ => Id.run do
+    for key in ["body", "orelse", "finalbody"] do
+      if let .ok (arr : Array Json) := stmt.getObjValAs? (Array Json) key then
+        for s in arr do if jsonHasEarlyExit s then return true
+    return false
+
 /-- Per-loop invariant data: the loop variable, whether the iterable is a `range(...)`, the threaded
-accumulators (in declaration order), and the conjuncts of its `Invariant(...)` markers. -/
+accumulators (in declaration order), the conjuncts of its `Invariant(...)` markers, the contribution
+expressions of `+= e` accumulators (for auto-derivation), and whether the loop early-exits. -/
 structure LoopInv where
   loopVar : String
   isRange : Bool
   accumulators : Array String
   invariants : Array Json
+  accMutations : Array (String × Json)
+  hasEarlyExit : Bool
 
 /-- All proof data for a monadic contracted function. -/
 structure MonadicContract where
@@ -156,7 +194,10 @@ def loopInvOf (declaredOrder : Array String) (forNode : Json) : Option LoopInv :
       | some ("Invariant", arg) => some arg
       | _ => none
     let accumulators := declaredOrder.filter fun v => loopBody.any (jsonAssignsName · v)
-    some { loopVar, isRange, accumulators, invariants }
+    let accMutations := accumulators.filterMap fun a =>
+      (accContribution? loopBody a).map (fun e => (a, e))
+    let hasEarlyExit := loopBody.any jsonHasEarlyExit
+    some { loopVar, isRange, accumulators, invariants, accMutations, hasEarlyExit }
   | _, _ => none
 
 /-- Track M: a *monadic* contracted function (has a `for` loop with `Invariant(...)`, or effects).
@@ -191,20 +232,41 @@ private def conjoin (ps : Array (TSyntax `term)) : PygenM (TSyntax `term) :=
   | [] => `(True)
   | p :: rest => rest.foldlM (fun acc q => `($acc ∧ $q)) p
 
-/-- One `· ⇓⟨cur, accs…⟩ => ⌜let i := (cur.prefix.length : Int); <invariants>⌝` bullet for a loop.
-Non-`range` loops (where the loop variable isn't the index) get a trivial `⌜True⌝` bullet for now. -/
+/-- One invariant bullet for a loop. The predicate relates the accumulators to `cur.prefix`:
+* user `Invariant(...)` markers, conjoined — for a `range` loop the loop variable is bound to
+  `cur.prefix.length` (the index), so index-style invariants work;
+* otherwise, **auto-derived** from each `acc += e` update: `acc = (cur.prefix.map (fun v => e)).sum`
+  (only for non-`range` loops, where `cur.prefix` is the element list);
+* else `True`.
+The binder is `⇓ cur =>` with no accumulators, `⇓⟨cur, a, …⟩` with some. -/
 def buildBullet (li : LoopInv) : PygenM (TSyntax `term) := do
   for a in li.accumulators do addVar a.toName
   addVar li.loopVar.toName
-  let accIdents := li.accumulators.map (fun s => mkIdent s.toName)
+  -- A loop that `return`s/`break`s threads an early-return state; its invariant is supplied via
+  -- `Invariant.withEarlyReturn`. For the `True` postcondition a trivial pair discharges it.
+  if li.hasEarlyExit then
+    return ← `(Invariant.withEarlyReturn (onReturn := fun _ _ => ⌜True⌝) (onContinue := fun _ _ => ⌜True⌝))
   let cur := mkIdent `cur
-  if li.isRange && !li.invariants.isEmpty then
-    let invProps ← li.invariants.mapM (fun inv => withPropCondition true (getCode inv `term))
-    let body ← conjoin invProps
-    let loopVarId := mkIdent li.loopVar.toName
-    `(⇓⟨$cur, $accIdents,*⟩ => ⌜let $loopVarId := ($(cur).prefix.length : Int); $body⌝)
+  let loopVarId := mkIdent li.loopVar.toName
+  let body ←
+    if !li.invariants.isEmpty then
+      let props ← li.invariants.mapM (fun inv => withPropCondition true (getCode inv `term))
+      let conj ← conjoin props
+      if li.isRange then `(let $loopVarId := ($(cur).prefix.length : Int); $conj) else pure conj
+    else if !li.isRange && !li.accMutations.isEmpty then
+      let mut autos : Array (TSyntax `term) := #[]
+      for (acc, contrib) in li.accMutations do
+        let cStx ← getCode contrib `term
+        autos := autos.push
+          (← `($(mkIdent acc.toName) = ($(cur).prefix.map (fun $loopVarId => $cStx)).sum))
+      conjoin autos
+    else
+      `(True)
+  if li.accumulators.isEmpty then
+    `(⇓ $cur => ⌜$body⌝)
   else
-    `(⇓⟨$cur, $accIdents,*⟩ => ⌜True⌝)
+    let accIdents := li.accumulators.map (fun s => mkIdent s.toName)
+    `(⇓⟨$cur, $accIdents,*⟩ => ⌜$body⌝)
 
 /-- Build the monadic spec theorem:
 `theorem <thm> : ⦃⌜<requires>⌝⦄ <fn> <params> ⦃⇓ _ => ⌜True⌝⦄ := by mvcgen [<fn>] invariants … with taste?` -/
@@ -218,7 +280,8 @@ def buildMonadicSpec (thmName fnName : TSyntax `ident) (paramIdents : Array (TSy
   -- `for i in pyRange n` loop to the native `List.range` loop so mvcgen recovers "element = index"
   -- and index-style invariants close (harmless on non-`pyRange` loops). `taste_ingr` can't be passed
   -- here (mvcgen's `[…]` takes spec theorems, not simp sets) — it's applied by the `with taste?` closer.
-  let lemmas ← #[(⟨fnName.raw⟩ : TSyntax `term), mkIdent ``PastaLean.pyRange_forIn].mapM
+  let lemmas ← #[(⟨fnName.raw⟩ : TSyntax `term), mkIdent ``PastaLean.pyRange_forIn,
+      mkIdent ``PastaLean.pyRange_forIn_start].mapM
     (fun t => `(Lean.Parser.Tactic.simpLemma| $t:term))
   let tac ← if bullets.isEmpty then
       `(tacticSeq| mvcgen [$lemmas,*] with taste?)
