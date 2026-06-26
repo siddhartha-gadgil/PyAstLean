@@ -8,6 +8,7 @@ import PastaLean.PyGens.UseCases.ListComp
 import PastaLean.PyGens.UseCases.Match
 import PastaLean.PyGens.UseCases.Exceptions
 import PastaLean.PyVerify.AssertTactic
+import PastaLean.PyVerify.Contracts
 
 open Lean Meta Elab Term Qq Std
 
@@ -424,29 +425,20 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         let paramNames := (← functionArgInfos json).map (fun (id, _) => id.getId.toString)
         if let some (letJsons, hypJsons, conclJson) := theoremShape? paramNames bodyArr substantive then
           if (← getNumericMode) == .approx then return ⟨mkNullNode #[]⟩
-          let argInfos ← functionArgInfos json
-          let thmCmd ← withFreshVariables do
-            -- register the `let`-bound names so they lower as locals inside the proposition
-            for letJson in letJsons do
-              if let .ok tname := (letJson.getObjVal? "target").bind (·.getObjValAs? String "id") then
-                addVar tname.toName
-            -- build outside-in: conclusion, then hypothesis arrows, then `let`-binders, then `∀`s
-            let mut propTy ← withPropCondition true (getCode conclJson `term)
-            for hypJson in hypJsons.reverse do
-              propTy ← `($(← withPropCondition true (getCode hypJson `term)) → $propTy)
-            for letJson in letJsons.reverse do
-              let .ok target := letJson.getObjVal? "target" |
-                throwError "theoremShape: Assign without target"
-              let .ok value := letJson.getObjVal? "value" |
-                throwError "theoremShape: Assign without value"
-              propTy ← `(let $(← getCode target `ident) := $(← getCode value `term)
-                         $propTy)
-            for (argIdent, ty?) in argInfos.reverse do
-              propTy ← match ty? with
-                | some ty => `(∀ ($argIdent : $ty), $propTy)
-                | none => `(∀ $argIdent, $propTy)
-            `(command| @[taste_ingr] theorem $nameIdent : $propTy := by taste?)
+          let thmCmd ← buildSpecTheorem nameIdent (← functionArgInfos json) letJsons hypJsons conclJson
           return ⟨mkNullNode #[thmCmd.raw]⟩
+        -- Track P: a pure, straight-line contracted function (`Requires`/`Ensures` + `let`s +
+        -- `return`) emits its ordinary runnable `def` (contracts stripped) plus a `<fn>_spec` theorem.
+        if let some (cleanBody, letJsons, hypJsons, conclJson) := contractShape? paramNames bodyArr substantive then
+          let argInfos ← functionArgInfos json
+          let valueStx ← functionValueSyntax argInfos cleanBody
+          let finalDef ← applyPrivacy name (← `(command| def $nameIdent := $valueStx))
+          if (← getNumericMode) == .approx then
+            return ⟨mkNullNode #[finalDef.raw]⟩
+          let thmName := mkIdent (name ++ "_spec").toName
+          let thmCmd ← buildSpecTheorem thmName argInfos letJsons hypJsons conclJson
+          let attrCmd ← `(command| attribute [simp] $nameIdent)
+          return ⟨mkNullNode #[finalDef.raw, attrCmd.raw, thmCmd.raw]⟩
         -- `_real_fn` (set by the Python per-variable pass) means the function produces or handles an
         -- `ℝ` value → it must be `noncomputable` in exact mode. This is now DECOUPLED from which
         -- floats are `ℝ`: real params carry a per-`arg` `_real` stamp (read in `functionArgInfos`)

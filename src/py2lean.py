@@ -946,7 +946,7 @@ def translate_to_json(source_code, filepath=None, best_effort=False):
     translator = ASTToJsonLeanVisitor(
         source_code,
         best_effort=best_effort,
-        supported_modules=SUPPORTED_LIBRARY_IMPORTS,
+        supported_modules=set(SUPPORTED_LIBRARY_IMPORTS) | set(LIBRARY_IMPORT_ALIASES),
         type_only_modules=TYPE_ONLY_IMPORTS,
         module_dir=module_dir,
     )
@@ -1638,7 +1638,7 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
                     "",
                     "set_option linter.all false", # shut up warnings which annoyingly popup in output
                     "set_option mvcgen.warning false",
-                    ""
+                    "\n"
                     "set_option maxHeartbeats 800000",
                     "\n",
                 ]
