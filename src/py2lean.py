@@ -1800,8 +1800,8 @@ def main(argv=None):
     parser.add_argument(
         "--target",
         nargs="?",
-        default="term",
-        help="Lean target string to pass to the translator (default: term)",
+        default="command",
+        help="Lean target string to pass to the translator (default: target)",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output for debugging")
     parser.add_argument(

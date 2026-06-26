@@ -1,6 +1,7 @@
 import Mathlib
 import PastaLean.PyAPI.Operators
 import PastaLean.PyVerify.Pastafolio
+import PastaLean.PyVerify.HelperLemmas
 
 open Lean Elab Tactic
 open PastaLean.Pastafolio
