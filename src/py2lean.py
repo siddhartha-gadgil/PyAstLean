@@ -1330,16 +1330,20 @@ def invoke_lean_backend(ast_json, target, check=True, client=None):
 
 
 def _splice_taste_winners(code, winners):
-    """Replace each `taste?` proof obligation in `code`, in order, with its winning tactic string
-    from `winners` (or `sorry` if the list is short).
+    """Replace each `taste?` proof obligation in `code` with its winning tactic, matched by *byte
+    offset*: `winners` is a list of ``{"pos": <byte offset into code>, "proof": <tactic>}``. Matching
+    by position (not append order) is essential — a `mvcgen … with taste?` whose VCs `mvcgen` itself
+    discharged records NO winner, so order-based zipping would shift every later token onto the wrong
+    proof. A token with a matching winner gets it (prettified); a `with taste?` with no winner is a
+    self-closed `mvcgen` → drop the dead `with` clause; any other unmatched `taste?` → `sorry`.
 
-    Comment/string aware: `taste?` ALSO shows up inside user docstrings/comments (e.g. a docstring
-    that mentions ``:= by taste?``), which are not elaborated and so produce no winner. Replacing
-    those would corrupt the comment AND consume a winner meant for a real assert, misaligning the
-    rest. So we only substitute `taste?` occurring in actual code — outside `--` line comments,
-    `/- -/` (nestable) block comments, and `"..."` string literals."""
+    Comment/string aware: `taste?` ALSO shows up inside docstrings/comments (e.g. ``:= by taste?`` in
+    prose), which aren't elaborated and have no winner. Those never match a `pos`, so they're left
+    untouched — we only substitute `taste?` in actual code (outside `--` line comments, nestable
+    `/- -/` block comments, and `"..."` string literals)."""
+    by_pos = {w["pos"]: w["proof"] for w in winners if isinstance(w, dict) and "pos" in w}
     out = []
-    i, n, wi = 0, len(code), 0
+    i, n = 0, len(code)
     in_line_comment = False
     block_depth = 0
     in_string = False
@@ -1371,48 +1375,25 @@ def _splice_taste_winners(code, winners):
         if c == '"':
             in_string = True; out.append(c); i += 1; continue
         if code.startswith("taste?", i):
-            # Replace with the recorded winner, or `sorry` if none (a `taste?` left in the file would
-            # re-run the search every compile and can time out — `sorry` keeps the file compiling).
-            out.append(_prettify_with_closer(winners[wi]) if wi < len(winners) else "sorry")
-            wi += 1
+            # Byte offset of this token into `code` (the winners' `pos` is byte-based, UTF-8).
+            off = len(code[:i].encode("utf-8"))
+            if off in by_pos:
+                proof = by_pos[off]
+                if proof.strip():
+                    # The recorded `c₁; c₂; …` sequence — drop it in verbatim (no `first`, no merge).
+                    out.append(proof)
+                else:
+                    # Empty proof: `mvcgen` discharged every VC, so the trailing `taste?` ran on no
+                    # goals. Prune the dangling `taste?` line for a clean `mvcgen [...]`.
+                    while out and out[-1].strip() == "":
+                        out.pop()
+            else:
+                # Unmatched `taste?` (e.g. inside prose, or no recorded proof) → keep it compiling.
+                out.append("sorry")
             i += len("taste?")
             continue
         out.append(c); i += 1
     return "".join(out)
-
-# Matches `winnerAltSep` in PastaLean/PyVerify/Pastafolio/Search.lean — joins the per-VC proofs an
-# `mvcgen … with taste?` closer records (one per verification condition).
-_WINNER_ALT_SEP = "\x01"
-
-def _prettify_with_closer(winner):
-    """An `mvcgen … with taste?` records one proof per verification condition, separator-joined. The
-    closer runs once per goal, and they share the same simplifier prefix (the profile's `simp_all
-    [taste_ingr]` etc.), differing only in the closer. Factor that common `;`-prefix out and offer the
-    distinct closers as `pre; first | c₁ | c₂` (a goal the prefix already closed takes the `done`
-    branch) instead of repeating the whole prefix in every `first` alternative. A single VC (no
-    separator) is returned untouched."""
-    if _WINNER_ALT_SEP not in winner:
-        return winner
-    proofs = winner.split(_WINNER_ALT_SEP)
-    steps = [p.split("; ") for p in proofs]
-    # longest common leading run of identical steps (the shared simplifiers)
-    common = []
-    for col in zip(*steps):
-        if all(s == col[0] for s in col):
-            common.append(col[0])
-        else:
-            break
-    # the remaining per-goal closer; "" (prefix already closed the goal) → `done`. Dedupe, keep order.
-    branches = []
-    for sl in steps:
-        suffix = "; ".join(sl[len(common):]) or "done"
-        # a multi-step suffix may end in a non-closing step, so guard it with `; done` (and parens, to
-        # bind inside `first`); a lone closer (`positivity`, `omega`, `done`) is already terminal.
-        branch = suffix if "; " not in suffix else f"({suffix}; done)"
-        if branch not in branches:
-            branches.append(branch)
-    body = branches[0] if len(branches) == 1 else "first | " + " | ".join(branches)
-    return f"{'; '.join(common)}; {body}" if common else body
 
 def _newline_before_mvcgen_with(code):
     """Put a contract spec's `mvcgen … invariants` closer on its own line: the pretty-printer glues

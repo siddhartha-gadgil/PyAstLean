@@ -28,11 +28,12 @@ def pipeline := fun (xs : List Int) ↦
     let _ := Libraries.passta.pyPassEnsures (result == (2 : Int) *ₚ PastaLean.pySum xs +ₚ PastaLean.pyLen xs)
     return result : Id _)
 
-theorem pipeline_spec : ⦃⌜True⌝⦄ pipeline xs ⦃⇓_ => ⌜True⌝⦄ := by
+theorem pipeline_spec : ⦃⌜True⌝⦄ pipeline xs ⦃⇓_ => ⌜True⌝⦄ :=
+  by
   mvcgen [pipeline, PastaLean.pyRange_forIn, PastaLean.pyRange_forIn_start] invariants
   · ⇓⟨cur, acc⟩ => ⌜acc = (cur.prefix.map (fun x => x)).sum⌝
   · ⇓⟨cur, cnt⟩ => ⌜cnt = (cur.prefix.map (fun x => (1 : Int))).sum⌝
-  with simp_all (config := { zetaDelta := true }) [taste_ingr]
+  simp_all (config := { zetaDelta := true }) [taste_ingr]; simp_all (config := { zetaDelta := true }) [taste_ingr]
 
 def pipeline'rn := fun (xs : List Int) ↦
   Id.run

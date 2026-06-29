@@ -68,6 +68,10 @@ def runProveFileTask (jsonTask : Json) (env : Environment) : IO Json := do
     | return errorResponse "proveFile: missing 'code' field or it is not a string"
   PastaLean.tasteWinnersRef.set #[]
   let src := stripImports code
+  -- `stripImports` drops the leading `import …` lines, so byte offsets recorded against `src` are
+  -- shifted left by exactly those removed prefix bytes. Add them back so each winner's `pos` is an
+  -- offset into the *original* `code` the Python splicer walks.
+  let shift := code.toUTF8.size - src.toUTF8.size
   let inputCtx := Parser.mkInputContext src "<proveFile>"
   let cmdState := Command.mkState env {} {}
   let frontendState ← Lean.Elab.IO.processCommands inputCtx {} cmdState
@@ -75,7 +79,8 @@ def runProveFileTask (jsonTask : Json) (env : Environment) : IO Json := do
   let hasErrors := frontendState.commandState.messages.hasErrors
   pure <| Json.mkObj [
     ("result", Json.bool true),
-    ("winners", Json.arr (winners.map Json.str)),
+    ("winners", Json.arr (winners.map (fun (off, p) =>
+      Json.mkObj [("pos", toJson (off + shift)), ("proof", Json.str p)]))),
     ("hasErrors", Json.bool hasErrors)
   ]
 

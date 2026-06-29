@@ -13,8 +13,9 @@ namespace PastaLean
 -- Extra lemmas for every `simp_all [taste_ingr]`. Add more with `attribute [taste_ingr] my_lemma`.
 attribute [taste_ingr] mul_nonneg add_nonneg
 
-/-- Discovered proofs, for the `py2lean` prove-and-replace pipeline. -/
-initialize tasteWinnersRef : IO.Ref (Array String) ← IO.mkRef #[]
+/-- Discovered proofs (each keyed by its tactic's byte offset), for the `py2lean` prove-and-replace
+pipeline — the offset lets the splicer match each proof back to its own `taste?` token. -/
+initialize tasteWinnersRef : IO.Ref (Array (Nat × String)) ← IO.mkRef #[]
 
 /-- Simplifiers reshape the goal (lower `+ₚ`/`*ₚ`, unfold leaves, clear casts); closers must fully
 discharge it — first to close wins, so order is just preference. -/

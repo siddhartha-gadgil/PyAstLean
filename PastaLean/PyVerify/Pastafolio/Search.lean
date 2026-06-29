@@ -13,6 +13,8 @@ open Lean Elab Tactic Meta Meta.Tactic.TryThis
 
 namespace PastaLean.Pastafolio
 
+def maxHeartbeatsPasta := 1000000
+
 /-- Run `tac` for real progress: a target changed OR the goal count changed (so `intros`, splits,
 etc. count). Rejects `sorry`-closures. Does not restore state — the caller owns rollback. `none`
 means "did nothing useful / failed / cheated with sorry / ran out of its `budget`". -/
@@ -124,15 +126,10 @@ partial def search (budget : Nat) (fuel : Nat) (p : Profile) (visited : List (Li
     let closeSeq := if closeSeq.size > 1 && closeSeq.all (· == "sorry") then #["all_goals sorry"] else closeSeq
     return acc ++ closeSeq
 
-/-- Source span of the most-recently recorded winner (see `runPastafolio`). `mvcgen … with taste?`
-invokes the closer once *per verification condition*, all at the same source span; tracking the last
-span lets us merge those consecutive proofs into one winner. Self-resets when the winners array is
-emptied (every `proveFile` run starts by clearing it), so spans never leak across runs. -/
-initialize lastWinnerSpanRef : IO.Ref (Option (Option Nat × Option Nat)) ← IO.mkRef none
-
-/-- Separator joining the per-goal proofs accumulated for one `mvcgen … with taste?` span (its closer
-runs once per verification condition). Kept raw here and deduplicated; the py2lean splicer factors
-their shared prefix into the pretty `pre; first | c₁ | c₂` closer. A control char never in tactics. -/
+/-- Separator joining the per-goal proofs accumulated for one `mvcgen … with taste?` token (its closer
+runs once per verification condition, all at the same byte offset). Kept raw here and deduplicated;
+the py2lean splicer factors their shared prefix into the pretty `pre; first | c₁ | c₂` closer. A
+control char never in tactics. -/
 def winnerAltSep : String := String.singleton (Char.ofNat 1)
 
 /-- Accumulate another per-goal proof for the same span, skipping duplicates. -/
@@ -148,7 +145,7 @@ def runPastafolio (p : Profile) (stx : Syntax) : TacticM Unit := do
   -- itself runs unbounded so its own bookkeeping never times out mid-search, and a candidate
   -- exhausting its budget only kills that candidate. Read before zeroing the ambient.
   let raw := match Lean.Core.getMaxHeartbeats (← getOptions) with
-    | 0 => 200000000
+    | 0 => maxHeartbeatsPasta
     | n => n
   let budget := p.budget raw
   withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) do
@@ -163,23 +160,27 @@ def runPastafolio (p : Profile) (stx : Syntax) : TacticM Unit := do
     -- `;`-sequence the committed tactics. No surrounding parens: a `by t1; t2; t3` block parses fine
     -- both as a top-level `theorem … := by …` and as an in-body `have … := by …`.
     let proof := String.intercalate "; " used.toList
+    -- The search closes any goal it can't discharge with `sorry` so the surrounding term still
+    -- elaborates — but that makes the tactic *succeed silently*; the only signal is the generic,
+    -- easy-to-miss "declaration uses 'sorry'". Emit a warning right at the tactic so interactive users
+    -- get a yellow squiggle + infoview message pointing at the exact `taste?` that gave up.
+    let nSorry := used.foldl (fun n s => if s == "sorry" || s == "all_goals sorry" then n + 1 else n) 0
+    if nSorry > 0 then
+      logWarningAt stx m!"`taste?` could not close the goal and left `sorry` (unproved goals: {toString nSorry}). Partial proof: {proof}"
     if let some ref := p.winnersRef? then
-      -- Record the winner — but `mvcgen … with taste?` runs this closer once per verification
-      -- condition, all sharing one source span. Merge those consecutive same-span proofs into a single
-      -- `first | (p₁) | (p₂) | …` entry so the winners list stays 1:1 with the `taste?` *tokens*: the
-      -- single-token prove-and-replace splice then maps it back faithfully, and `mvcgen` (applying the
-      -- closer per goal) picks whichever alternative discharges each VC. A lone single-goal `taste?`
-      -- records just `proof`, unwrapped.
-      let key := (stx.getPos?.map (·.byteIdx), stx.getTailPos?.map (·.byteIdx))
+      -- Record the winner keyed by this tactic's byte offset. `mvcgen … with taste?` runs the closer
+      -- once per verification condition, all at the SAME offset — merge those into one entry (the
+      -- py2lean splicer factors them into `first | …` and `mvcgen`, applying the closer per goal,
+      -- picks the matching one). Keying by offset (not just append order) is what lets the splice
+      -- match each proof back to its own `taste?` token: a token whose goals `mvcgen` fully self-closed
+      -- invokes the closer zero times and so records *nothing*, and the splice can then emit a clean
+      -- `mvcgen [...]` with no dead closer instead of stealing the next token's proof.
+      let off := (stx.getPos?.getD 0).byteIdx
       let ws ← ref.get
-      if ws.isEmpty then lastWinnerSpanRef.set none
-      if (← lastWinnerSpanRef.get) == some key && !ws.isEmpty then
-        ref.set (ws.pop.push (mergeWinner ws.back! proof))
-      else
-        ref.set (ws.push proof)
-      lastWinnerSpanRef.set (some key)
-      match Lean.Parser.runParserCategory (← getEnv) `tactic proof with
-      | .ok s => addSuggestion stx (⟨s⟩ : TSyntax `tactic) (origSpan? := stx)
-      | .error _ => pure ()
+      match ws.findIdx? (·.1 == off) with
+      | some idx => ref.set (ws.set! idx (off, mergeWinner ws[idx]!.2 proof))
+      | none => ref.set (ws.push (off, proof))
+      -- Suggest TryThis for the (possibly partial) proof found
+      addSuggestion stx (SuggestionText.string proof : Suggestion) (origSpan? := stx)
 
 end PastaLean.Pastafolio

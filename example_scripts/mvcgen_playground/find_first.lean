@@ -24,9 +24,11 @@ def find_first := fun (xs : List Int) ↦ fun (k : Int) ↦
     let __py_ret_1 := -(1 : Int)
     return __py_ret_1 : Id _)
 
-theorem find_first_spec : ⦃⌜True⌝⦄ find_first xs k ⦃⇓_ => ⌜True⌝⦄ := by
+theorem find_first_spec : ⦃⌜True⌝⦄ find_first xs k ⦃⇓_ => ⌜True⌝⦄ :=
+  by
   mvcgen [find_first, PastaLean.pyRange_forIn, PastaLean.pyRange_forIn_start] invariants
-  · Invariant.withEarlyReturn (onReturn := fun _ _ => ⌜True⌝) (onContinue := fun _ _ => ⌜True⌝)with simp_all (config := { zetaDelta := true }) [taste_ingr]
+  · Invariant.withEarlyReturn (onReturn := fun _ _ => ⌜True⌝) (onContinue := fun _ _ => ⌜True⌝)
+  simp_all (config := { zetaDelta := true }) [taste_ingr]; simp_all (config := { zetaDelta := true }) [taste_ingr]; simp_all (config := { zetaDelta := true }) [taste_ingr]
 
 def find_first'rn := fun (xs : List Int) ↦ fun (k : Int) ↦
   Id.run

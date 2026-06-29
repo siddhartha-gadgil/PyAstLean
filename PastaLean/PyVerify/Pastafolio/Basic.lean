@@ -102,8 +102,10 @@ structure Profile where
   budget      : Nat → Nat := id
   /-- Max number of committed simplifier steps — guards against runaway simplification. -/
   fuel        : Nat := 24
-  /-- Optional sink for each discovered proof string (used by splice-back pipelines such as
-  `py2lean`'s prove-and-replace). `none` to just emit the "Try this" suggestion. -/
-  winnersRef? : Option (IO.Ref (Array String)) := none
+  /-- Optional sink for each discovered proof, keyed by the *byte offset* of its tactic syntax (used
+  by splice-back pipelines such as `py2lean`'s prove-and-replace, which matches each proof to its
+  `taste?` token by position — so a token whose goals `mvcgen` self-closed records nothing and the
+  splice can tell). `none` to just emit the "Try this" suggestion. -/
+  winnersRef? : Option (IO.Ref (Array (Nat × String))) := none
 
 end PastaLean.Pastafolio

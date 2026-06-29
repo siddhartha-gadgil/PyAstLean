@@ -23,13 +23,13 @@ def factorial := fun (n : Int) ↦
     let _ := Libraries.passta.pyPassEnsures (decide (result ≥ (1 : Int)))
     return result : Id _)
 
-theorem factorial_spec : ⦃⌜n ≥ (0 : Int)⌝⦄ factorial n ⦃⇓_ => ⌜True⌝⦄ := by
+theorem factorial_spec : ⦃⌜n ≥ (0 : Int)⌝⦄ factorial n ⦃⇓_ => ⌜True⌝⦄ :=
+  by
   mvcgen [factorial, PastaLean.pyRange_forIn, PastaLean.pyRange_forIn_start] invariants
   · ⇓⟨cur, result⟩ =>
     ⌜let i := (cur.prefix.length : Int);
       result ≥ (1 : Int)⌝
-  with
-    simp_all (config := { zetaDelta := true }) [taste_ingr]; nlinarith
+  simp_all (config := { zetaDelta := true }) [taste_ingr]; nlinarith
 
 def factorial'rn := fun (n : Int) ↦
   Id.run

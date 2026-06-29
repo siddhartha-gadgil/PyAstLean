@@ -273,14 +273,19 @@ def buildMonadicSpec (thmName fnName : TSyntax `ident) (paramIdents : Array (TSy
   let lemmas ← #[(⟨fnName.raw⟩ : TSyntax `term), mkIdent ``PastaLean.pyRange_forIn,
       mkIdent ``PastaLean.pyRange_forIn_start].mapM
     (fun t => `(Lean.Parser.Tactic.simpLemma| $t:term))
-  -- `mvcgen`'s `with` runs one closer over *all* the (heterogeneous) verification conditions; `taste?`
-  -- portfolios each one. It records one winner per VC, which `runPastafolio` merges (by source span)
-  -- into a single `first | …` so the prove-and-replace splice maps the lone `taste?` token back faithfully.
-  let tac ← if bullets.isEmpty then
-      `(tacticSeq| mvcgen [$lemmas,*] with taste?)
+  -- `taste?` is a TRAILING tactic (not `mvcgen … with taste?`). `with` runs one closer per VC, so
+  -- heterogeneous VCs force an ugly `first | …` portfolio in the recorded proof. As a trailing tactic
+  -- `taste?` instead sees all the leftover VCs as goals at once and its close-loop records a flat
+  -- `c₁; c₂; …` sequence (one closer per goal, in order) — the prove-and-replace splice drops that in
+  -- verbatim. If `mvcgen` already discharged every VC, `taste?` runs on no goals and records nothing,
+  -- and the splice prunes the dangling `taste?` line, leaving a clean `mvcgen [...]`.
+  let mv ← if bullets.isEmpty then
+      `(tactic| mvcgen [$lemmas,*])
     else
-      `(tacticSeq| mvcgen [$lemmas,*] invariants $[· $bullets:term]* with taste?)
+      `(tactic| mvcgen [$lemmas,*] invariants $[· $bullets:term]*)
   `(command| theorem $thmName :
-      ⦃⌜$pre⌝⦄ $fnName $paramIdents* ⦃⇓ _ => ⌜True⌝⦄ := by $tac)
+      ⦃⌜$pre⌝⦄ $fnName $paramIdents* ⦃⇓ _ => ⌜True⌝⦄ := by
+        $mv:tactic
+        taste?)
 
 end PastaLean
