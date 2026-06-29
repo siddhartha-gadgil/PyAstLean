@@ -261,8 +261,9 @@ def buildBullet (li : LoopInv) : PygenM (TSyntax `term) := do
     let accIdents := li.accumulators.reverse.map (fun s => mkIdent s.toName)
     `(⇓⟨$cur, $accIdents,*⟩ => ⌜$body⌝)
 
-/-- Build the monadic spec theorem:
-`theorem <thm> : ⦃⌜<requires>⌝⦄ <fn> <params> ⦃⇓ _ => ⌜True⌝⦄ := by mvcgen [<fn>] invariants … with taste?` -/
+/-- Build the monadic spec theorem `⦃⌜Requires⌝⦄ fn params ⦃⇓ _ => ⌜True⌝⦄` proven by
+`mvcgen [fn] invariants …` + a trailing `taste?`. Only the precondition is lifted from `Requires`/
+`Assume`; the postcondition stays `True` (`Ensures`/`Assert` are proved as in-body checkpoints). -/
 def buildMonadicSpec (thmName fnName : TSyntax `ident) (paramIdents : Array (TSyntax `ident))
     (info : MonadicContract) : PygenM (TSyntax `command) := withFreshVariables do
   for p in paramIdents do addVar p.getId
@@ -283,6 +284,21 @@ def buildMonadicSpec (thmName fnName : TSyntax `ident) (paramIdents : Array (TSy
       `(tactic| mvcgen [$lemmas,*])
     else
       `(tactic| mvcgen [$lemmas,*] invariants $[· $bullets:term]*)
+
+  -- POSTCONDITION (currently the postcondition is `True`, `Ensures` is proved as an
+  -- in-body checkpoint instead). To lift `Ensures` into the spec *statement* (Nagini-style, modular
+  -- `@[spec]` reuse): collect the `Ensures` args into `info.ensures` and the returned variable name
+  -- into `info.retName` (see git history), then build the postcondition by binding that variable so an
+  -- `Ensures(result …)` reads as a fact about the result, and tag the theorem `@[spec]`:
+  --
+  --   let retBinder := (info.retName.map (mkIdent ·.toName)).getD (mkIdent `x)
+  --   if let some r := info.retName then addVar r.toName
+  --   let postProps ← info.ensures.mapM (fun e => withPropCondition true (getCode e `term))
+  --   let post ← conjoin postProps        -- empty ⇒ `True`
+  --   `(command| @[spec] theorem $thmName :
+  --       ⦃⌜$pre⌝⦄ $fnName $paramIdents* ⦃⇓ $retBinder => ⌜$post⌝⦄ := by $mv:tactic
+  -- taste?)
+  --
   `(command| theorem $thmName :
       ⦃⌜$pre⌝⦄ $fnName $paramIdents* ⦃⇓ _ => ⌜True⌝⦄ := by
         $mv:tactic
