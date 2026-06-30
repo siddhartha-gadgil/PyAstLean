@@ -1351,29 +1351,51 @@ def _splice_taste_winners(code, winners):
         two = code[i:i + 2]
         c = code[i]
         if in_line_comment:
-            out.append(c); i += 1
+            out.append(c)
+            i += 1
             if c == "\n":
                 in_line_comment = False
             continue
         if block_depth > 0:
             if two == "/-":
-                block_depth += 1; out.append(two); i += 2; continue
+                block_depth += 1
+                out.append(two)
+                i += 2
+                continue
             if two == "-/":
-                block_depth -= 1; out.append(two); i += 2; continue
-            out.append(c); i += 1; continue
+                block_depth -= 1
+                out.append(two)
+                i += 2
+                continue
+            out.append(c)
+            i += 1
+            continue
         if in_string:
             if c == "\\" and i + 1 < n:
-                out.append(code[i:i + 2]); i += 2; continue
+                out.append(code[i:i + 2])
+                i += 2
+                continue
             if c == '"':
                 in_string = False
-            out.append(c); i += 1; continue
+            out.append(c)
+            i += 1
+            continue
         # normal code context
         if two == "--":
-            in_line_comment = True; out.append(two); i += 2; continue
+            in_line_comment = True
+            out.append(two)
+            i += 2
+            continue
         if two == "/-":
-            block_depth = 1; out.append(two); i += 2; continue
+            block_depth = 1
+            out.append(two)
+            i += 2
+            continue
         if c == '"':
-            in_string = True; out.append(c); i += 1; continue
+            in_string = True
+            out.append(c)
+            i += 1
+            continue
         if code.startswith("taste?", i):
             # Byte offset of this token into `code` (the winners' `pos` is byte-based, UTF-8).
             off = len(code[:i].encode("utf-8"))
@@ -1392,7 +1414,8 @@ def _splice_taste_winners(code, winners):
                 out.append("sorry")
             i += len("taste?")
             continue
-        out.append(c); i += 1
+        out.append(c)
+        i += 1
     return "".join(out)
 
 def _newline_before_mvcgen_with(code):
@@ -1829,6 +1852,29 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
         result[code_key] = _inject_comments_into_lean(ast_json, result[code_key])
     return result
 
+def _run_llm_prepasses(file_path, source_code, args):
+    """Apply the requested LLM pre-passes (`--redesign` then `--contracts`) to `source_code`, write the
+    transformed program to a sibling `.py` file, and return its path for translation. The heavy lifting
+    (prompts, provider/model handling) lives in `src/llm.py`; this only orchestrates and persists."""
+    import llm
+
+    applied = []
+    if args.redesign:
+        logger.info("LLM redesign pre-pass (provider=%s)…", args.llm_provider)
+        source_code = llm.verifiable_design_code(source_code, provider=args.llm_provider, model=args.llm_model)
+        applied.append("redesign")
+    if args.contracts:
+        logger.info("LLM contracts pre-pass (provider=%s)…", args.llm_provider)
+        source_code = llm.contract_code(source_code, provider=args.llm_provider, model=args.llm_model)
+        applied.append("contracts")
+
+    orig = Path(file_path)
+    out_path = orig.with_name(f"{orig.stem}.{'.'.join(applied)}.py")
+    out_path.write_text(source_code, encoding="utf-8")
+    logger.warning("LLM %s pre-pass wrote transformed source to %s", "+".join(applied), out_path)
+    return str(out_path)
+
+
 def egProgram():
     return """def f(n):
     x = n + 1
@@ -1877,6 +1923,30 @@ def main(argv=None):
              "splice the concrete winning tactic — or `sorry` — over each `:= by taste?`. Default: "
              "on. Use --no-prove-asserts to leave the obligations as `:= by taste?`.",
     )
+    parser.add_argument(
+        "--redesign",
+        action="store_true",
+        help="LLM pre-pass: restructure the Python to maximise its provable surface (pure "
+             "single-expression math, IO/raise pushed to the edge) per docs/verifiable-python-design.md "
+             "BEFORE translating. Runs before --contracts when both are given.",
+    )
+    parser.add_argument(
+        "--contracts",
+        action="store_true",
+        help="LLM pre-pass: insert formal contracts (Requires/Ensures/Invariant/Assert/…) into the "
+             "Python BEFORE translating, so the emitted Lean carries provable Hoare-triple obligations.",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default="openai",
+        help="LLM provider for --contracts/--redesign (openai, gemini, openrouter, deepinfra). "
+             "Default: openai.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="LLM model for --contracts/--redesign. Default: the provider's default chat model.",
+    )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -1885,6 +1955,15 @@ def main(argv=None):
         parser.error("the following arguments are required: file")
 
     source_code = Path(file_path).read_text(encoding="utf-8")
+
+    # LLM pre-passes (optional). `--redesign` runs first (restructure for provability), then
+    # `--contracts` (annotate the restructured code). Each rewrites the source; because the downstream
+    # annotator re-reads the file by path, the transformed source is written to a sibling `.py` file and
+    # translated from there — which also lets the user inspect exactly what the LLM produced.
+    if args.redesign or args.contracts:
+        file_path = _run_llm_prepasses(file_path, source_code, args)
+        source_code = Path(file_path).read_text(encoding="utf-8")
+
     result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
                                mode=args.mode, prove_asserts=args.prove_asserts)
 
