@@ -293,8 +293,93 @@ def monadicContractInfo? (body : Array Json) : Option MonadicContract := Id.run 
   if !sawContract then return none
   return some { cleanBody := clean, requires, ensures, retName, loops }
 
+/-- A contracted function whose loop is a single straight-line `while` carrying an `Invariant` and a
+`Decreases`. This is the shape we lower through `pyWhile` + `pyWhile_correct` (instead of mvcgen's
+`for`-only `invariants` bullets). The MVP shape:
+
+    <Requires/Ensures…>
+    v₁ = e₁ ; … ; v_k = e_k          -- pre-loop inits of the state vars
+    while <test>:
+        Invariant(…) …               -- one or more
+        Decreases(<measure>)         -- exactly one (the variant μ)
+        v_i = e_i' ; …               -- straight-line reassignments of the state vars only
+    return <retExpr>                 -- in terms of the state vars
+
+`none` if the body isn't exactly inits + one such `while` + a `return`, if any non-`Assign`/marker
+statement appears in the loop, if a loop-assigned var lacks a pre-loop init, or if no `Decreases`. -/
+structure WhileShape where
+  requires   : Array Json          -- precondition predicates
+  ensures    : Array Json          -- postcondition predicates (mention `Result()`)
+  retExpr    : Json                -- the returned expression (state-var terms; also the `Result()` value)
+  stateVars  : Array String        -- mutable vars threaded through the loop, in init order
+  inits      : Array Json          -- initial value expression per state var
+  test       : Json                -- the `while` guard
+  invariants : Array Json          -- `Invariant(...)` conjuncts
+  decreases  : Json                -- the `Decreases(...)` measure (the variant μ)
+  bodyAssigns : Array Json         -- the loop body's straight-line assignments (markers stripped)
+
+def whileContractShape? (paramNames : Array String) (substantive : Array Json) :
+    Option WhileShape := Id.run do
+  if bodyNeedsIOMonad substantive || bodyNeedsExceptionMonad substantive then return none
+  let mut requires : Array Json := #[]
+  let mut ensures : Array Json := #[]
+  let mut initOrder : Array String := #[]            -- pre-loop assign targets, in order
+  let mut initVals : Std.HashMap String Json := {}
+  let mut retExpr? : Option Json := none
+  let mut whileNode? : Option Json := none
+  for s in substantive do
+    match contractArg? s with
+    | some (member, arg) =>
+      match member with
+      | "Requires" | "Assume" => requires := requires.push arg
+      | "Ensures" | "Assert" => if jsonMentionsResult arg then ensures := ensures.push arg
+      | _ => return none                              -- a stray Invariant/Decreases outside the loop
+    | none =>
+      match jsonNodeType? s with
+      | some "Assign" =>
+        if whileNode?.isSome then return none         -- assignment AFTER the loop: not the MVP shape
+        let .ok target := s.getObjVal? "target" | return none
+        if jsonNodeType? target != some "Name" then return none
+        let .ok tname := target.getObjValAs? String "id" | return none
+        let .ok val := s.getObjVal? "value" | return none
+        if !initVals.contains tname then initOrder := initOrder.push tname
+        initVals := initVals.insert tname val
+      | some "While" =>
+        if whileNode?.isSome then return none         -- only one loop supported
+        whileNode? := some s
+      | some "Return" =>
+        retExpr? := (s.getObjVal? "value").toOption
+      | _ => return none
+  let some whileNode := whileNode? | return none
+  let some retExpr := retExpr? | return none
+  let .ok test := whileNode.getObjVal? "test" | return none
+  let loopBody := (whileNode.getObjValAs? (Array Json) "body").toOption.getD #[]
+  let mut invariants : Array Json := #[]
+  let mut decreases? : Option Json := none
+  let mut bodyAssigns : Array Json := #[]
+  let mut assignedInLoop : Array String := #[]
+  for s in loopBody do
+    match contractArg? s with
+    | some ("Invariant", arg) => invariants := invariants.push arg
+    | some ("Decreases", arg) => decreases? := some arg
+    | some _ => return none                           -- other markers inside the loop: bail
+    | none =>
+      if jsonNodeType? s != some "Assign" then return none  -- nested if/break/etc.: not the MVP shape
+      let .ok target := s.getObjVal? "target" | return none
+      if jsonNodeType? target != some "Name" then return none
+      let .ok tname := target.getObjValAs? String "id" | return none
+      if !assignedInLoop.contains tname then assignedInLoop := assignedInLoop.push tname
+      bodyAssigns := bodyAssigns.push s
+  let some decreases := decreases? | return none      -- need the variant μ
+  if invariants.isEmpty then return none
+  -- State vars: those assigned in the loop, each of which must have a pre-loop init. Ordered by init.
+  let stateVars := initOrder.filter (assignedInLoop.contains ·)
+  if stateVars.isEmpty || assignedInLoop.any (!initVals.contains ·) then return none
+  let inits := stateVars.map (initVals.get! ·)
+  return some { requires, ensures, retExpr, stateVars, inits, test, invariants, decreases, bodyAssigns }
+
 /-- Conjoin a list of `Prop` terms (empty → `True`). -/
-private def conjoin (ps : Array (TSyntax `term)) : PygenM (TSyntax `term) :=
+def conjoin (ps : Array (TSyntax `term)) : PygenM (TSyntax `term) :=
   match ps.toList with
   | [] => `(True)
   | p :: rest => rest.foldlM (fun acc q => `($acc ∧ $q)) p

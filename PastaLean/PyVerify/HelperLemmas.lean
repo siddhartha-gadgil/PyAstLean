@@ -60,4 +60,41 @@ closers (`positivity`/`nlinarith`) don't see through the `^ₚ` notation, so nor
 the contract goals (sum-of-squares, variance); higher powers can get their own reductions as needed. -/
 @[taste_ingr] theorem pyHPow_two (a : Int) : a ^ₚ (2 : Int) = a ^ 2 := rfl
 
+/-!
+## `while` loops — `pyWhile` + the while rule
+
+A Python `while` lowers, via core `while … do`, to `Loop.forIn` → the **`partial` `whileM`** fixpoint:
+opaque, with no usable equation lemma, so nothing can be proved about it directly. The fix mirrors
+`pyRange`/`pyRange_forIn`: a *total*, reasoned-about combinator (`pyWhile`) plus one Hoare rule
+(`pyWhile_correct`). The verification def emits `pyWhile`; the runnable `'rn` twin keeps real `while`.
+-/
+
+/-- **The while rule.** If the invariant `I` holds initially, is preserved by `body` whenever the guard
+holds *and* the measure `μ` strictly decreases there, and implies `Q` once the guard fails, then `Q`
+holds of the loop result. The measure decrease is what makes `pyWhile` reach its exit within fuel.
+Maps the contract markers directly: `Invariant → I`, `Decreases → μ`, loop test → `c`, post → `Q`. -/
+theorem pyWhile_correct {σ : Type} {I Q : σ → Prop} (μ : σ → Nat) (c : σ → Bool) (body : σ → σ)
+    (s₀ : σ) (hpre : I s₀)
+    (hstep : ∀ s, I s → c s = true → I (body s) ∧ μ (body s) < μ s)
+    (hexit : ∀ s, I s → c s = false → Q s) :
+    Q (pyWhile μ c body s₀) := by
+  -- Generalise over any fuel ≥ μ s and induct on it.
+  suffices h : ∀ fuel s, I s → μ s ≤ fuel → Q (pyWhileFuel c body fuel s) from
+    h (μ s₀) s₀ hpre (le_refl _)
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro s hI hμ
+    cases hcs : c s with
+    | false => exact hexit s hI hcs
+    | true => obtain ⟨_, hdec⟩ := hstep s hI hcs; exfalso; omega
+  | succ n ih =>
+    intro s hI hμ
+    cases hcs : c s with
+    | false => simpa [pyWhileFuel, hcs] using hexit s hI hcs
+    | true =>
+      obtain ⟨hIb, hdec⟩ := hstep s hI hcs
+      simp only [pyWhileFuel, hcs, if_true]
+      exact ih (body s) hIb (by omega)
+
 end PastaLean

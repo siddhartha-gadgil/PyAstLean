@@ -51,6 +51,19 @@ def pyRange (stop : Int) (start : Int := 0) (step : Int := 1) : List Int := do
   else
     []
 
+/-- Fuel-bounded loop: structurally recursive on `fuel`, hence total. Internal to `pyWhile`. -/
+def pyWhileFuel {σ : Type} (c : σ → Bool) (body : σ → σ) : Nat → σ → σ
+  | 0, s => s
+  | n + 1, s => if c s then pyWhileFuel c body n (body s) else s
+
+/-- Python `while c: body` as a TOTAL function: iterate `body` while the guard `c` holds, with `μ` the
+termination measure bounding the iteration count. (`for`'s collection is its own variant; an unbounded
+`while` needs `μ` supplied — that is what the `Decreases(...)` contract provides.) The verification
+def emits this; the runnable `'rn` twin keeps a real `while`. Its Hoare rule is `pyWhile_correct`
+(in `PyVerify/HelperLemmas.lean`). -/
+def pyWhile {σ : Type} (μ : σ → Nat) (c : σ → Bool) (body : σ → σ) (s : σ) : σ :=
+  pyWhileFuel c body (μ s) s
+
 /-- Python-style list indexing with negative indices and runtime failure on out-of-bounds access. -/
 def pyListGetItem {α : Type} [Inhabited α] (xs : List α) (idx : Int) : α :=
   let len := xs.length
