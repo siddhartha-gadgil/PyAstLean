@@ -20,8 +20,11 @@ def OfKind (exc : PyException) : String :=
 
 end PyException
 
-/-- Concrete exception monad used for translated Python code that can raise. -/
+/-- Concrete exception monad used for translated Python code that can raise (with IO). -/
 abbrev PyExcept (α : Type) := ExceptT PyException IO α
+
+/-- Pure exception monad for translated Python code that can raise but does no IO. -/
+abbrev PyExceptId (α : Type) := ExceptT PyException Id α
 
 instance : ToString PyException where
   toString exc :=

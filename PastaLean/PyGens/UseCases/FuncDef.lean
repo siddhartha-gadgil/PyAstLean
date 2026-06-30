@@ -221,7 +221,9 @@ of a variable that was never declared `let mut`. -/
 def functionValueSyntax (argInfos : Array (TSyntax `ident × Option (TSyntax `term))) (bodyElems : Array Json) :
     PygenM (TSyntax `term) := withFreshVariables do
   let usesExceptions := bodyNeedsExceptionMonad bodyElems
-  let usesIO := !usesExceptions && bodyNeedsIOMonad bodyElems
+  let usesRealIO := bodyNeedsIOMonad bodyElems
+  -- In prove mode, exceptions without real IO can use the pure PyExceptId monad
+  let usesPureExceptions := (← getNumericMode) == .exact && usesExceptions && !usesRealIO
   let mkLambda (body : TSyntax `term) : PygenM (TSyntax `term) := do
     let mut result := body
     for (argIdent, ty?) in argInfos.toList.reverse do
@@ -238,7 +240,17 @@ def functionValueSyntax (argInfos : Array (TSyntax `ident × Option (TSyntax `te
     if bodyElems.any (fun b => jsonMutatesName b argIdent.getId.toString) then
       addVar argIdent.getId
       paramPrelude := paramPrelude.push (← `(doElem| let mut $argIdent:ident := $argIdent))
-  if usesExceptions then
+  if usesPureExceptions then
+    let bodyStxArray ← monadicFunctionBodySyntax bodyElems
+    let exceptIdIdent := mkIdent ``PastaLean.PyExceptId
+    let exceptIdBody ← `(((do
+          $[$paramPrelude:doElem]*
+          $[$bodyStxArray:doElem]*) : $exceptIdIdent _))
+    if argInfos.isEmpty then
+      pure exceptIdBody
+    else
+      mkLambda exceptIdBody
+  else if usesExceptions then
     let bodyStxArray ← monadicFunctionBodySyntax bodyElems
     let exceptIdent := mkIdent ``PastaLean.PyExcept
     let exceptBody ← `(((do
@@ -248,7 +260,7 @@ def functionValueSyntax (argInfos : Array (TSyntax `ident × Option (TSyntax `te
       pure exceptBody
     else
       mkLambda exceptBody
-  else if usesIO then
+  else if usesRealIO then
     let bodyStxArray ← monadicFunctionBodySyntax bodyElems
     let ioIdent := mkIdent ``IO
     let ioBody ← `(((do
@@ -315,11 +327,25 @@ def functionCommandWithEffectSignature? (nameIdent : TSyntax `ident)
   let mkDef : TSyntax `term → TSyntax `term → PygenM (TSyntax `command) := fun fullTy valueStx =>
     if noncomp then `(command| noncomputable def $nameIdent : $fullTy := $valueStx)
     else `(command| def $nameIdent : $fullTy := $valueStx)
-  -- Exceptions take precedence over `IO`: `PyExcept` already layers `ExceptT` over `IO`, so a body
-  -- that both prints and raises must be typed `PyExcept` (not `IO`), or the `try`/`catch` runs in
-  -- raw `IO` and the caught value is `IO.Error` instead of `PyException`. Mirrors the body-lowering
-  -- precedence in `functionDefSyntax`.
-  if bodyNeedsExceptionMonad bodyElems then
+  -- Exceptions take precedence over `IO`. In prove mode, exceptions without real IO use the pure
+  -- `PyExceptId` monad (ExceptT over Id); in run mode or with real IO, use `PyExcept` (ExceptT over IO).
+  -- This prevents phantom IO from print statements (which compile to pyPrintNoop in prove mode) from
+  -- polluting the type signature.
+  let usesRealIO := bodyNeedsIOMonad bodyElems
+  let usesPureExceptions := (← getNumericMode) == .exact && bodyNeedsExceptionMonad bodyElems && !usesRealIO
+  if usesPureExceptions then
+    match returnTy? with
+    | none => return none
+    | some retTy =>
+        let exceptIdIdent := mkIdent ``PastaLean.PyExceptId
+        let codomain ← `($exceptIdIdent $retTy)
+        match ← functionArrowTypeSyntax? argInfos codomain with
+        | some fullTy =>
+            let valueStx ← functionMonadicValueNoCast argInfos bodyElems
+            return some (← mkDef fullTy valueStx)
+        | none =>
+            return none
+  else if bodyNeedsExceptionMonad bodyElems then
     match returnTy? with
     | none => return none
     | some retTy =>
@@ -331,7 +357,7 @@ def functionCommandWithEffectSignature? (nameIdent : TSyntax `ident)
             return some (← mkDef fullTy valueStx)
         | none =>
             return none
-  else if bodyNeedsIOMonad bodyElems then
+  else if usesRealIO then
     match returnTy? with
     | none => return none
     | some retTy =>

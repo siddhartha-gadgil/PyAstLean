@@ -158,9 +158,10 @@ theorems, not to produce output. It takes the SAME arguments as `pyPrintIO` — 
 keeps the full `print(...)` line, readable and type-checked — but discards them and produces no
 output (a noncomputable `ℝ` has no real printable form; see the placeholder `PyPrintable ℝ` below).
 Any `input()` side effect in the arguments is still hoisted and run before this; only the output is
-dropped. The runnable `'rn` / `--mode run` twin keeps the real `pyPrintIO`. -/
-def pyPrintNoop (_parts : List PyPrintArg) (_sep : String := " ") (_ending : String := "\n") :
-    IO Unit := pure ()
+dropped. The runnable `'rn` / `--mode run` twin keeps the real `pyPrintIO`.
+Polymorphic in the monad - works in IO, PyExcept, PyExceptId, Id, etc. -/
+def pyPrintNoop [Monad m] (_parts : List PyPrintArg) (_sep : String := " ") (_ending : String := "\n") :
+    m Unit := pure ()
 
 /-- Placeholder renderers for `ℝ`, so a `prove`-mode `print(...)` line that embeds a real value can
 still be *written* and type-checked — via `pyPrintArg` (`PyPrintable`), string interpolation `s!"…
