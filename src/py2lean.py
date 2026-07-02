@@ -11,6 +11,10 @@ import subprocess
 import logging
 import threading
 from collections import deque
+try:
+    import fcntl  # POSIX advisory file locking; used to serialize the backend build across processes.
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None
 sys.path.append(os.path.dirname(__file__))
 from node_visitor import *
 from toplevel_state import (
@@ -19,6 +23,7 @@ from toplevel_state import (
     annotate_if_assigned_names,
 )
 from contract_passta import CONTRACT_FUNCS as PASSTA_STAR_MEMBERS
+from normalize_loops import normalize_counting_loops
 
 HOMEDIR = Path.absolute(Path(__name__).parent.parent)
 SRC_DIR = HOMEDIR / "src"
@@ -915,122 +920,6 @@ def _sanitize_hole_identifiers(ast_tree):
             n.arg = safe
 
 
-def _is_name(node, name=None):
-    return (isinstance(node, dict) and node.get("node_type") == "Name"
-            and (name is None or node.get("id") == name))
-
-
-def _name_referenced(nodes, name):
-    """Does `name` appear as a `Name` load anywhere within `nodes`?"""
-    stack = list(nodes)
-    while stack:
-        n = stack.pop()
-        if isinstance(n, dict):
-            if n.get("node_type") == "Name" and n.get("id") == name:
-                return True
-            stack.extend(n.values())
-        elif isinstance(n, list):
-            stack.extend(n)
-    return False
-
-
-def _is_const_one(node):
-    return isinstance(node, dict) and node.get("node_type") == "Constant" and node.get("value") == 1
-
-
-def _is_incr_by_one(stmt, var):
-    """True if `stmt` increments `var` by 1, as `var += 1` or `var = var + 1`."""
-    if not isinstance(stmt, dict):
-        return False
-    if stmt.get("node_type") == "AugAssign":
-        return (_is_name(stmt.get("target"), var) and stmt.get("op") == "add"
-                and _is_const_one(stmt.get("value")))
-    if stmt.get("node_type") == "Assign" and _is_name(stmt.get("target"), var):
-        v = stmt.get("value")
-        if isinstance(v, dict) and v.get("node_type") == "BinOp" and v.get("op") == "add":
-            l, r = v.get("left"), v.get("right")
-            return (_is_name(l, var) and _is_const_one(r)) or (_is_const_one(l) and _is_name(r, var))
-    return False
-
-
-def _counting_while_match(stmt):
-    """`(loop_var, stop_node)` for a canonical `while i < bound: …; i += 1` (or `i <= bound`, or
-    `i = i + 1`), else `None`. For `<=`, the `range` stop is `bound + 1`."""
-    if not (isinstance(stmt, dict) and stmt.get("node_type") == "While"):
-        return None
-    test = stmt.get("test")
-    if not (isinstance(test, dict) and test.get("node_type") == "Compare" and test.get("op") in ("lt", "le")):
-        return None
-    if not _is_name(test.get("left")):
-        return None
-    loop_var = test["left"]["id"]
-    body = stmt.get("body", [])
-    if not body or not _is_incr_by_one(body[-1], loop_var):
-        return None
-    bound = test["right"]
-    if test["op"] == "le":
-        bound = {"node_type": "BinOp", "op": "add", "left": bound,
-                 "right": {"node_type": "Constant", "value": 1}}
-    return loop_var, bound
-
-
-def _normalize_counting_loops_in_block(body):
-    """Rewrite a canonical counting `while i < bound: …; i += 1` (with a preceding `i = 0` in the
-    same block, and `i` unused after the loop) into `for i in range(bound): …`, so the verification
-    path handles it via the well-supported `for`/`forIn` machinery rather than mvcgen's fragile
-    `while`. Recurses into nested blocks first. Semantics-preserving only under those guards (a `for`
-    leaves `i = bound-1`, a `while` leaves `i = bound`), so we bail if any guard fails."""
-    for stmt in body:
-        if not isinstance(stmt, dict):
-            continue
-        for key in ("body", "orelse", "finalbody"):
-            if isinstance(stmt.get(key), list):
-                _normalize_counting_loops_in_block(stmt[key])
-        for handler in stmt.get("handlers", []) or []:
-            if isinstance(handler, dict):
-                _normalize_counting_loops_in_block(handler.get("body", []))
-        for method in stmt.get("methods", []) or []:
-            if isinstance(method, dict):
-                _normalize_counting_loops_in_block(method.get("body", []))
-    i = 0
-    while i < len(body):
-        match = _counting_while_match(body[i])
-        if match:
-            loop_var, bound = match
-            init_idx, start_node = None, None
-            for j in range(i - 1, -1, -1):
-                s = body[j]
-                if not isinstance(s, dict):
-                    continue
-                if (s.get("node_type") == "Assign" and _is_name(s.get("target"), loop_var)
-                        and isinstance(s.get("value"), dict) and s["value"].get("node_type") == "Constant"
-                        and isinstance(s["value"].get("value"), int)):
-                    init_idx, start_node = j, s["value"]
-                    break
-                if s.get("node_type") in ("Assign", "AugAssign") and _is_name(s.get("target"), loop_var):
-                    break  # `i` re-bound to something else first → not the canonical pattern
-            if init_idx is not None and not _name_referenced(body[i + 1:], loop_var):
-                stmt = body[i]
-                new_body = stmt["body"][:-1]  # drop the `i += 1`
-                # `range(stop)` when the counter starts at 0, else `range(start, stop)`.
-                args = [bound] if start_node.get("value") == 0 else [start_node, bound]
-                stmt.clear()
-                stmt.update({
-                    "node_type": "For",
-                    "target": {"node_type": "Name", "id": loop_var},
-                    "iter": {"node_type": "Range", "func": {"node_type": "Name", "id": "range"},
-                             "args": args, "keywords": {}},
-                    "body": new_body,
-                    "orelse": [],
-                })
-                del body[init_idx]
-                i -= 1
-        i += 1
-
-
-def normalize_counting_loops(module_json):
-    if isinstance(module_json, dict) and isinstance(module_json.get("body"), list):
-        _normalize_counting_loops_in_block(module_json["body"])
 
 
 def translate_to_json(source_code, filepath=None, best_effort=False):
@@ -1076,6 +965,10 @@ def translate_to_json(source_code, filepath=None, best_effort=False):
         )
         for src in translator.unsupported_log:
             logger.warning("  unsupported: %s", src)
+    # Rewrite canonical counting `while i < bound: …; i += 1` into `for i in range(start, bound)`, under
+    # conservative semantics-preserving guards (see `src/normalize_loops.py`). A non-counting or
+    # guard-failing `while` is left as written and verified directly via `pyWhile` (Track W). Comment
+    # out to keep every `while` a `while`.
     normalize_counting_loops(data)
     annotate_library_imports(data)
     annotate_exception_effects(data)
@@ -1140,11 +1033,7 @@ class LeanBackendClient:
             return True
         return False
 
-    def _ensure_binary(self):
-        if not self._binary_needs_rebuild():
-            logger.debug("Reusing existing py2lean backend binary; no rebuild needed.")
-            return
-
+    def _run_lake_build(self):
         logger.debug("Building py2lean backend binary before starting server.")
         build = subprocess.run(
             ["lake", "build", "py2lean"],
@@ -1154,6 +1043,32 @@ class LeanBackendClient:
         )
         if build.returncode != 0:
             raise RuntimeError(build.stderr.strip() or build.stdout.strip() or "lake build py2lean failed")
+
+    def _ensure_binary(self):
+        if not self._binary_needs_rebuild():
+            logger.debug("Reusing existing py2lean backend binary; no rebuild needed.")
+            return
+
+        # Serialize the build across processes. Without this, N parallel workers (e.g. `regen_examples.py
+        # --jobs`) each run `lake build py2lean` at once; they contend on lake's `.lake` lock, all but one
+        # fail to start the backend, and best-effort then silently degrades every statement to
+        # `pyUnsupported`. With an exclusive lock, the first worker builds while the rest wait, then
+        # re-check and reuse the freshly-built binary.
+        if fcntl is None:
+            self._run_lake_build()
+            return
+
+        lock_dir = self.cwd / ".lake"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "py2lean-build.lock"
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                # Another worker may have built it while we blocked on the lock — re-check before building.
+                if self._binary_needs_rebuild():
+                    self._run_lake_build()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def _command(self):
         return ["lake", "env", str(self.binary_path), "--server"]
@@ -1351,29 +1266,51 @@ def _splice_taste_winners(code, winners):
         two = code[i:i + 2]
         c = code[i]
         if in_line_comment:
-            out.append(c); i += 1
+            out.append(c)
+            i += 1
             if c == "\n":
                 in_line_comment = False
             continue
         if block_depth > 0:
             if two == "/-":
-                block_depth += 1; out.append(two); i += 2; continue
+                block_depth += 1
+                out.append(two)
+                i += 2
+                continue
             if two == "-/":
-                block_depth -= 1; out.append(two); i += 2; continue
-            out.append(c); i += 1; continue
+                block_depth -= 1
+                out.append(two)
+                i += 2
+                continue
+            out.append(c)
+            i += 1
+            continue
         if in_string:
             if c == "\\" and i + 1 < n:
-                out.append(code[i:i + 2]); i += 2; continue
+                out.append(code[i:i + 2])
+                i += 2
+                continue
             if c == '"':
                 in_string = False
-            out.append(c); i += 1; continue
+            out.append(c)
+            i += 1
+            continue
         # normal code context
         if two == "--":
-            in_line_comment = True; out.append(two); i += 2; continue
+            in_line_comment = True
+            out.append(two)
+            i += 2
+            continue
         if two == "/-":
-            block_depth = 1; out.append(two); i += 2; continue
+            block_depth = 1
+            out.append(two)
+            i += 2
+            continue
         if c == '"':
-            in_string = True; out.append(c); i += 1; continue
+            in_string = True
+            out.append(c)
+            i += 1
+            continue
         if code.startswith("taste?", i):
             # Byte offset of this token into `code` (the winners' `pos` is byte-based, UTF-8).
             off = len(code[:i].encode("utf-8"))
@@ -1392,7 +1329,8 @@ def _splice_taste_winners(code, winners):
                 out.append("sorry")
             i += len("taste?")
             continue
-        out.append(c); i += 1
+        out.append(c)
+        i += 1
     return "".join(out)
 
 def _newline_before_mvcgen_with(code):
@@ -1829,6 +1767,30 @@ def translate_to_lean(source_code, target="term", filepath = None, imports_add =
         result[code_key] = _inject_comments_into_lean(ast_json, result[code_key])
     return result
 
+def _run_llm_prepasses(file_path, source_code, args):
+    """Apply the requested LLM pre-passes (`--redesign` then `--contracts`) to `source_code`, write the
+    transformed program to a sibling `.py` file, and return its path for translation. The heavy lifting
+    (prompts, provider/model handling) lives in `src/llm.py`; this only orchestrates and persists."""
+    import llm
+
+    applied = []
+    if args.redesign:
+        logger.info("LLM redesign pre-pass (provider=%s)…", args.llm_provider)
+        source_code = llm.verifiable_design_code(source_code, provider=args.llm_provider, model=args.llm_model)
+        applied.append("redesign")
+    if args.contracts:
+        logger.info("LLM contracts pre-pass (provider=%s)…", args.llm_provider)
+        source_code = llm.contract_code(source_code, provider=args.llm_provider, model=args.llm_model,
+                                        goal=getattr(args, "user_prompt", None))
+        applied.append("contracts")
+
+    orig = Path(file_path)
+    out_path = orig.with_name(f"{orig.stem}.{'.'.join(applied)}.py")
+    out_path.write_text(source_code, encoding="utf-8")
+    logger.warning("LLM %s pre-pass wrote transformed source to %s", "+".join(applied), out_path)
+    return str(out_path)
+
+
 def egProgram():
     return """def f(n):
     x = n + 1
@@ -1869,6 +1831,7 @@ def main(argv=None):
              "(e.g. `main'rn`, `sigmoid'rn`).",
     )
     parser.add_argument(
+        "-p",
         "--prove-asserts",
         dest="prove_asserts",
         action=argparse.BooleanOptionalAction,
@@ -1876,6 +1839,41 @@ def main(argv=None):
         help="Run the prove-and-replace pass on each assert: elaborate in the warm backend and "
              "splice the concrete winning tactic — or `sorry` — over each `:= by taste?`. Default: "
              "on. Use --no-prove-asserts to leave the obligations as `:= by taste?`.",
+    )
+    parser.add_argument(
+        "-r",
+        "--redesign",
+        action="store_true",
+        help="LLM pre-pass: restructure the Python to maximise its provable surface (pure "
+             "single-expression math, IO/raise pushed to the edge) per docs/verifiable-python-design.md "
+             "BEFORE translating. Runs before --contracts when both are given.",
+    )
+    parser.add_argument(
+        "-c",
+        "--contracts",
+        action="store_true",
+        help="LLM pre-pass: insert formal contracts (Requires/Ensures/Invariant/Assert/…) into the "
+             "Python BEFORE translating, so the emitted Lean carries provable Hoare-triple obligations.",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default="openai",
+        help="LLM provider for --contracts/--redesign (openai, gemini, openrouter, deepinfra). "
+             "Default: openai.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="LLM model for --contracts/--redesign. Default: the provider's default chat model.",
+    )
+    parser.add_argument(
+        "-u",
+        "--user-prompt",
+        dest="user_prompt",
+        default=None,
+        help="Optional natural-language goal for --contracts: what you want to be able to prove "
+             "(e.g. -p \"I want to prove the result equals n!\"). Passed to the LLM so the inserted "
+             "contracts/asserts are tailored to it.",
     )
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
@@ -1885,6 +1883,15 @@ def main(argv=None):
         parser.error("the following arguments are required: file")
 
     source_code = Path(file_path).read_text(encoding="utf-8")
+
+    # LLM pre-passes (optional). `--redesign` runs first (restructure for provability), then
+    # `--contracts` (annotate the restructured code). Each rewrites the source; because the downstream
+    # annotator re-reads the file by path, the transformed source is written to a sibling `.py` file and
+    # translated from there — which also lets the user inspect exactly what the LLM produced.
+    if args.redesign or args.contracts:
+        file_path = _run_llm_prepasses(file_path, source_code, args)
+        source_code = Path(file_path).read_text(encoding="utf-8")
+
     result = translate_to_lean(source_code, args.target, file_path, best_effort=not args.strict,
                                mode=args.mode, prove_asserts=args.prove_asserts)
 

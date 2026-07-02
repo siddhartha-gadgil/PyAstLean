@@ -15,6 +15,7 @@ open Lean Meta Elab Term Qq Std
 namespace PastaLean
 
 open Lean.Parser.Term
+open Std.Do  -- the `⦃⌜…⌝⦄ … ⦃⇓ … => …⦄` Hoare-triple notation used by the `while` (`pyWhile`) spec
 
 /-!
   Translates Python function definitions and the remaining module-level glue.
@@ -395,6 +396,130 @@ def theoremShape? (paramNames : Array String) (body : Array Json) (substantive :
   | some (hyps, concl) => return some (lets, hyps, concl)
   | none => return none
 
+/-! ### `while`-loop verification via `pyWhile` -/
+
+/-- Projection of the `idx`-th component (0-based) of an `n`-tuple `base`: `base.1`, `base.2.1`, …, with
+the last component being the full `.2`-chain (Lean tuples are right-nested). `n ≤ 1` → `base` itself. -/
+partial def whileTupleProj (base : TSyntax `term) (idx n : Nat) : PygenM (TSyntax `term) := do
+  if n ≤ 1 then return base
+  let mut t := base
+  for _ in [0:idx] do t ← `(($t).2)
+  if idx == n - 1 then return t else `(($t).1)
+
+/-- Right-nested tuple `(e₀, e₁, …, e_{k-1})` from `elems` (matching `whileTupleProj`). -/
+def whileNestedTuple (elems : Array (TSyntax `term)) : PygenM (TSyntax `term) := do
+  if elems.isEmpty then return (← `(()))
+  let mut acc := elems[elems.size - 1]!
+  for i in [0:elems.size - 1] do
+    let e := elems[elems.size - 2 - i]!
+    acc ← `(($e, $acc))
+  return acc
+
+/-- `fun s => let v₁ := s.<p₁>; … ; <inner>` — a lambda over the loop state tuple that binds each state
+variable name to its projection, so `inner` (built by `getCode` over the original JSON) refers to the
+state variables by name. `inner` is run with those names registered. -/
+def whileStateLambda (stateVars : Array String) (inner : PygenM (TSyntax `term)) :
+    PygenM (TSyntax `term) := withFreshVariables do
+  for v in stateVars do addVar v.toName
+  let innerStx ← inner
+  let s := mkIdent `s
+  let n := stateVars.size
+  let mut body := innerStx
+  for i in [0:n] do
+    let idx := n - 1 - i
+    let proj ← whileTupleProj s idx n
+    body ← `(let $(mkIdent stateVars[idx]!.toName):ident := $proj; $body)
+  `(fun $s => $body)
+
+/-- Emit a `while`-shaped contracted function as a `pyWhile` verification def plus its `@[spec]`
+Hoare-triple theorem, discharged by `pyWhile_correct` (init/step/exit left to `taste?`). Returns the
+two commands. Exact mode only; the runnable `'rn` twin takes the ordinary `while` path. -/
+def buildWhileFunction (name : String) (json : Json) (sh : WhileShape) :
+    PygenM (Array (TSyntax `command)) := do
+  let nameIdent := mkIdent name.toName
+  let argInfos ← functionArgInfos json
+  let stateVars := sh.stateVars
+  let n := stateVars.size
+  -- The three combinator lambdas (each captures the function parameters freely).
+  let cLam ← whileStateLambda stateVars
+    (do truthyConditionTerm sh.test (← withPropCondition true (getCode sh.test `term)))
+  let muLam ← whileStateLambda stateVars
+    (do let d ← getCode sh.decreases `term; `(($d : Int).toNat))
+  let bodyLam ← whileStateLambda stateVars (do
+    let elems : Array (TSyntax `term) := stateVars.map (fun v => ⟨(mkIdent v.toName).raw⟩)
+    let mut b ← whileNestedTuple elems
+    for assign in sh.bodyAssigns.reverse do
+      let .ok target := assign.getObjVal? "target" | throwError "pyWhile: body assign without target"
+      let .ok tname := target.getObjValAs? String "id" | throwError "pyWhile: body assign target not a Name"
+      let .ok valJson := assign.getObjVal? "value" | throwError "pyWhile: body assign without value"
+      -- `AugAssign` `v op= e` is `v = v op e`: synthesize the `BinOp` so all operator lowering applies.
+      let valJson := if jsonNodeType? assign == some "AugAssign" then
+          match assign.getObjValAs? String "op" with
+          | .ok op => Json.mkObj [("node_type", Json.str "BinOp"), ("op", Json.str op),
+                                  ("left", nameJson tname), ("right", valJson)]
+          | .error _ => valJson
+        else valJson
+      let valStx ← getCode valJson `term
+      b ← `(let $(mkIdent tname.toName):ident := $valStx; $b)
+    pure b)
+  -- Initial state tuple s₀.
+  let s0Elems ← sh.inits.mapM (fun e => getCode e `term)
+  let s0 ← whileNestedTuple s0Elems
+  let pyWhileCall ← `(PastaLean.pyWhile $muLam $cLam $bodyLam $s0)
+  -- The def: `fun params ↦ let sf := pyWhile …; let vᵢ := sf.<pᵢ>; <retExpr>`.
+  let defValue ← withFreshVariables do
+    for v in stateVars do addVar v.toName
+    let retStx ← getCode sh.retExpr `term
+    let sf := mkIdent `__py_sf
+    let mut b := retStx
+    for i in [0:n] do
+      let idx := n - 1 - i
+      let proj ← whileTupleProj sf idx n
+      b ← `(let $(mkIdent stateVars[idx]!.toName):ident := $proj; $b)
+    b ← `(let $sf := $pyWhileCall; $b)
+    -- The spec is a Hoare triple `⦃P⦄ fn args ⦃⇓ r => Q⦄`, so `fn args` must be a *monadic* value.
+    -- Wrap the pure result in `Id` (mirrors the `for`-loop path's `(do … : Id _)`); the `'rn` twin
+    -- keeps the ordinary runnable form.
+    b ← `((pure $b : Id _))
+    let mut v := b
+    for (argIdent, ty?) in argInfos.reverse do
+      v ← match ty? with
+        | some ty => `(fun ($argIdent : $ty) ↦ $v)
+        | none => `(fun $argIdent ↦ $v)
+    pure v
+  let finalDef ← applyPrivacy name (← `(command| def $nameIdent := $defValue))
+  -- The spec theorem.
+  let preProps ← sh.requires.mapM (fun r => withPropCondition true (getCode r `term))
+  let pre ← conjoin preProps
+  let rId := mkIdent `__py_r
+  let postProps ← sh.ensures.mapM
+    (fun e => withPropCondition true (getCode (substResultWith (nameJson "__py_r") e) `term))
+  let post ← conjoin postProps
+  -- `I` and `Q` lambdas over the state tuple (`Q` uses `Result() := retExpr`).
+  let iLam ← whileStateLambda stateVars
+    (do conjoin (← sh.invariants.mapM (fun inv => withPropCondition true (getCode inv `term))))
+  let qLam ← whileStateLambda stateVars
+    (do conjoin (← sh.ensures.mapM
+      (fun e => withPropCondition true (getCode (substResultWith sh.retExpr e) `term))))
+  let paramIdents := argInfos.map (·.1)
+  let nameLemma ← `(Lean.Parser.Tactic.simpLemma| $nameIdent:term)
+  -- Each `pyWhile_correct` side goal (init `I s₀`, step `I(body) ∧ μ' < μ`, exit `Q`) is a conjunction
+  -- mixing nonlinear (`nlinarith`) and `.toNat`-measure (`omega`) facts, which no single closer handles.
+  -- So: introduce, simp with the lambda β/ζ-reductions, split the conjunction (`and_intros`), then run a
+  -- closer portfolio per leaf. (`intros` covers `I s₀`, which has no binders.)
+  -- `try` guards the simplifiers (a trivial obligation can leave `simp_all`/`and_intros` no-progress,
+  -- which would otherwise error); the final `sorry` degrades an INSUFFICIENT contract (invariants that
+  -- don't entail the step) to a localized `sorry`-warning instead of a hard failure of the whole file.
+  let oblTac ← `(tactic|
+    intros <;> (try simp_all (config := { zetaDelta := true })) <;> (try and_intros) <;>
+      first | omega | nlinarith | positivity | grind | sorry)
+  let thmCmd ← `(command| @[spec] theorem $(mkIdent (name ++ "_spec").toName) :
+      ⦃⌜$pre⌝⦄ $nameIdent $paramIdents* ⦃⇓ $rId => ⌜$post⌝⦄ := by
+        mvcgen [$nameLemma]
+        · exact PastaLean.pyWhile_correct (I := $iLam) (Q := $qLam) $muLam $cLam $bodyLam $s0
+            (by $oblTac:tactic) (by $oblTac:tactic) (by $oblTac:tactic))
+  return #[finalDef, thmCmd]
+
 @[pygen "FunctionDef"]
 def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)
@@ -439,6 +564,14 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
           let thmCmd ← buildSpecTheorem thmName argInfos letJsons hypJsons conclJson
           let attrCmd ← `(command| attribute [simp] $nameIdent)
           return ⟨mkNullNode #[finalDef.raw, attrCmd.raw, thmCmd.raw]⟩
+        -- Track W: a `while`-loop contracted function (single straight-line `while` with `Invariant`
+        -- + `Decreases`). Lowered through `pyWhile` + `pyWhile_correct` (the `while` rule), since core
+        -- `while` is the opaque `whileM` mvcgen can't reason about. Exact mode only; the `'rn` twin
+        -- keeps a real `while`.
+        if (← getNumericMode) == .exact then
+          if let some sh := whileContractShape? paramNames substantive then
+            let cmds ← buildWhileFunction name json sh
+            return ⟨mkNullNode (cmds.map (·.raw))⟩
         -- Track M: a monadic contracted function (a `for` loop with `Invariant(...)`). Emit the
         -- function `Id`-typed (so `mvcgen` sees the `do`) with `Requires`/`Assume` stripped to the
         -- precondition, plus a `<fn>_spec` Hoare-triple theorem driven by `mvcgen … with taste?`.
@@ -483,7 +616,10 @@ def funcDefSyntax : (kind : SyntaxNodeKind) → Json →
         let isReal := (← getNumericMode) == .exact && json.getObjValAs? Bool "_real_fn" == .ok true
         let argInfos ← functionArgInfos json
         let effectCmd? ← functionCommandWithEffectSignature? nameIdent argInfos json isReal
-        let bodyElems ← functionBodyElems json
+        -- Drop any `Ensures(Result() …)`/`Assert(Result() …)` markers: they are verification-only
+        -- (lifted to the spec postcondition) and `Result()` has no runtime lowering, so they must not
+        -- leak into a runnable body — notably the `'rn` twin, which reaches this generic path.
+        let bodyElems := stripResultMarkers (← functionBodyElems json)
         let isRecursive := bodyElems.any (jsonReferencesName · baseName)
         -- A real-valued body (transcendental, directly or via a callee) forces `noncomputable`.
         let nc := isReal || (← bodyNeedsNoncomputable bodyElems)

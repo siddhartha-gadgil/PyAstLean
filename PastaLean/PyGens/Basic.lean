@@ -471,7 +471,6 @@ def boolOpSyntax : (kind : SyntaxNodeKind) → Json →
     | _ => throwError s!"Unsupported boolean operator: {op}"
   | _, _ => throwError s!"Unsupported syntax category for BoolOp node"
 
-#eval (-3)^2
 @[pygen "Compare"]
 def compareSyntax : (kind : SyntaxNodeKind) → Json →
     PygenM (TSyntax kind)

@@ -2,6 +2,7 @@ import Mathlib
 import PastaLean.PyAPI.Core
 import PastaLean.PyAPI.Operators
 import PastaLean.PyAPI.TasteIngr
+import PastaLean.PyVerify.PyWhile
 
 /-!
 # Helper lemmas for contract verification
@@ -59,5 +60,8 @@ closers (`positivity`/`nlinarith`) don't see through the `^ₚ` notation, so nor
 `x ^ 2` monoid power — then `positivity` recognises the even power as nonnegative. Squares dominate
 the contract goals (sum-of-squares, variance); higher powers can get their own reductions as needed. -/
 @[taste_ingr] theorem pyHPow_two (a : Int) : a ^ₚ (2 : Int) = a ^ 2 := rfl
+
+-- `pyWhile`, its `while` rule (`pyWhile_correct`), and the `while → for` bridge (`pyWhile_count`) now
+-- live in `PastaLean.PyVerify.PyWhile` (imported above), so all `pyWhile` material is in one file.
 
 end PastaLean

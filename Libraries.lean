@@ -7,6 +7,7 @@ import Libraries.math.Mapping
 import Libraries.math.TheoremsMath
 import Libraries.numpy.Mapping
 import Libraries.numpy.TheoremsNumpy
+import Libraries.pandas.Mapping
 import Libraries.passta.Mapping
 import Libraries.scipy.ScipyDef
 import Libraries.scipy.Mapping
