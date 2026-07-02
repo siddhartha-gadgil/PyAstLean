@@ -1,47 +1,133 @@
-import PastaLean.PyAPI.CommonProtocols.Iterable
-import PastaLean.PyAPI.PyPrint
-import PastaLean.PyAPI.Core
+import Libraries.pandas.Series
+
+/-!
+# pandas `DataFrame` — core
+
+A 2-D labelled table. Columns are stored as an **ordered** association list `(name, cells)` — pandas
+guarantees column order (`df.columns`, `df.shape`, iteration and printing all depend on it), which a
+`HashMap` would not preserve. Each column has one cell per index label.
+
+This file holds the type, construction, access (`columns`/`index`/`shape`/`at`/`iat`/column →
+`Series`), row slicing (`head`/`tail`), mutation (`insert`/`drop`) and printing. Column-wise
+reductions (`sum`, `mean`, `describe`, …) live in `DataFrameStats.lean`.
+-/
 
 namespace Libraries.pandas
 
-/-- DataFrame structure representing a 2D labeled data structure -/
+/-- A 2-D labelled table with ordered columns. -/
 structure DataFrame where
-  /-- Column name to column data mapping -/
-  columns : Std.HashMap String (List String)
-  /-- Row index labels -/
+  /-- Ordered `(columnName, cells)` pairs; every column has `index.length` cells. -/
+  cols  : List (String × List Cell)
+  /-- Row index labels. -/
   index : List String
-  deriving Repr
+  deriving Repr, Inhabited
 
-instance : Inhabited DataFrame where
-  default := { columns := {}, index := [] }
+namespace DataFrame
 
-/-- Helper function to construct DataFrame from raw data -/
-def pyDataFrameFunc {α β γ} [PastaLean.PyIterable α β] [PastaLean.PyIterable β γ] [PastaLean.PyPrintable γ] [Inhabited β]
-  (data : α) (index : Option (List String)) (columns : Option (List String))
-    : DataFrame :=
-  let rows := PastaLean.pyIter data|>.map (fun row => PastaLean.pyIter row|>.map (fun val => PastaLean.PyPrintable.pyStringify val))
-  match index, columns with
-  | some idx, some cols =>
-    if rows.length != idx.length || rows.length != cols.length then
-      panic! "ValueError: DataFrame constructor expects data, index, and columns to have the same length"
-    else
-      { columns := Std.HashMap.ofList (List.zip cols rows), index := idx }
-  | some idx, none =>
-    if rows.length != idx.length then
-      panic! "ValueError: DataFrame constructor expects data and index to have the same length"
-    else
-      let defaultCols := List.range (PastaLean.pyIter (PastaLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
-      { columns := Std.HashMap.ofList (List.zip defaultCols rows), index := idx }
-  | none, some cols =>
-    if rows.length != cols.length then
-      panic! "ValueError: DataFrame constructor expects data and columns to have the same length"
-    else
-      let defaultIdx := List.range rows.length|>.map (fun i => "row" ++ toString i)
-      { columns := Std.HashMap.ofList (List.zip cols rows), index := defaultIdx }
-  | none, none =>
-    let defaultIdx := List.range rows.length|>.map (fun i => "row" ++ toString i)
-    let defaultCols := List.range (PastaLean.pyIter (PastaLean.pyIter data).head!).length|>.map (fun i => "col" ++ toString i)
-    { columns := Std.HashMap.ofList (List.zip defaultCols rows), index := defaultIdx }
+private def rangeIndex (n : Nat) : List String := (List.range n).map toString
+
+/-- Transpose a row-major list of rows into columns (pandas reads `[[..],[..]]` as rows). -/
+private def transpose (rows : List (List Cell)) : List (List Cell) :=
+  match rows with
+  | []      => []
+  | r :: _  => (List.range r.length).map fun j => rows.map fun row => row[j]!
+
+/-- Build from row-major data (`pd.DataFrame([[1,2],[3,4]], columns=[...])`). Defaults to a
+`RangeIndex` for both rows and columns, as pandas does. -/
+def ofRows {α} [ToCell α]
+    (data : List (List α))
+    (index : Option (List String) := none) (columns : Option (List String) := none) : DataFrame :=
+  let rows := data.map toCells
+  let colData := transpose rows
+  let colNames := columns.getD (rangeIndex colData.length)
+  { cols := colNames.zip colData, index := index.getD (rangeIndex rows.length) }
+
+/-- Build column-wise (`pd.DataFrame({"a":[1,2], "b":[3,4]})`), preserving the given column order. -/
+def ofColumns (cols : List (String × List Cell)) (index : Option (List String) := none) : DataFrame :=
+  let nrows := (cols.head?.map (·.2.length)).getD 0
+  { cols, index := index.getD (rangeIndex nrows) }
+
+/-- Codegen entry point for `pd.DataFrame(...)`: row-major data with optional index/columns. -/
+def pyDataFrame {α} [ToCell α]
+    (data : List (List α))
+    (index : Option (List String) := none) (columns : Option (List String) := none)
+    (dtype copy : Unit := ()) : DataFrame :=
+  ofRows data index columns
+
+/-- Column names, in order. -/
+def getColumns (df : DataFrame) : List String := df.cols.map (·.1)
+
+/-- Row index labels. -/
+def getIndex (df : DataFrame) : List String := df.index
+
+/-- `(nrows, ncols)`. -/
+def shape (df : DataFrame) : Int × Int := (Int.ofNat df.index.length, Int.ofNat df.cols.length)
+
+/-- `df.empty`. -/
+def empty (df : DataFrame) : Bool := df.index.isEmpty || df.cols.isEmpty
+
+/-- Raw cells of a column by name. -/
+def colCells? (df : DataFrame) (name : String) : Option (List Cell) :=
+  (df.cols.find? (·.1 == name)).map (·.2)
+
+/-- Column access `df[name]` → a `Series` (indexed by the frame's row index). -/
+def getColumn (df : DataFrame) (name : String) : Series :=
+  match df.colCells? name with
+  | some cells => { values := cells, index := df.index, name }
+  | none       => panic! s!"KeyError: {name}"
+
+/-- First `n` rows (default 5). -/
+def head (df : DataFrame) (n : Nat := 5) : DataFrame :=
+  { cols := df.cols.map fun (nm, c) => (nm, c.take n), index := df.index.take n }
+
+/-- Last `n` rows (default 5). -/
+def tail (df : DataFrame) (n : Nat := 5) : DataFrame :=
+  let k := df.index.length - n
+  { cols := df.cols.map fun (nm, c) => (nm, c.drop k), index := df.index.drop k }
+
+/-- Scalar access by row label and column name (`df.at[row, col]`). -/
+def getAt (df : DataFrame) (rowLabel : String) (colName : String) : Cell :=
+  match df.index.idxOf? rowLabel, df.colCells? colName with
+  | some i, some cells => cells[i]!
+  | _, _ => panic! "KeyError: row label or column name not found"
+
+/-- Scalar access by integer positions (`df.iat[i, j]`). -/
+def iat (df : DataFrame) (i j : Nat) : Cell :=
+  match df.cols[j]? with
+  | some col => col.2[i]!
+  | none => panic! "IndexError: iat position out of bounds"
+
+/-- Insert / replace a column, preserving order (append if new). Length must match the row count. -/
+def insertColumn (df : DataFrame) (name : String) (cells : List Cell) : DataFrame :=
+  if cells.length != df.index.length then
+    panic! "ValueError: length of values does not match length of index"
+  else if df.cols.any (·.1 == name) then
+    { df with cols := df.cols.map fun (nm, c) => if nm == name then (nm, cells) else (nm, c) }
+  else
+    { df with cols := df.cols ++ [(name, cells)] }
+
+/-- Drop a column by name (`df.drop(columns=[name])`). No-op if absent. -/
+def dropColumn (df : DataFrame) (name : String) : DataFrame :=
+  { df with cols := df.cols.filter (·.1 != name) }
+
+set_option linter.unusedVariables false in
+/-- pandas-compatible `insert(loc, column, value)` (loc currently appends/replaces). -/
+def insert (df : DataFrame) (loc : Nat) (colName : String) (colData : List Cell) (ad : Bool := false) : DataFrame :=
+  df.insertColumn colName colData
+
+/-- Render a frame as aligned text (approximating pandas' `__repr__`, without dtype-aware widths). -/
+def toStr (df : DataFrame) : String :=
+  let header := "     " ++ String.intercalate "  " df.getColumns
+  let rows := (List.range df.index.length).map fun i =>
+    let label := df.index.getD i ""
+    let cells := df.cols.map fun col => (col.2.getD i Cell.na).toStr
+    label ++ "  " ++ String.intercalate "  " cells
+  String.intercalate "\n" (header :: rows)
+
+instance : ToString DataFrame := ⟨toStr⟩
+
+/-- Print a frame (`print(df)`). -/
+def printDf (df : DataFrame) : IO Unit := IO.println df.toStr
 
 instance : Coe (Array String) (Option (List String)) where
   coe a := some a.toList
@@ -49,75 +135,5 @@ instance : Coe (Array String) (Option (List String)) where
 instance : Coe (List String) (Option (List String)) where
   coe l := some l
 
-set_option linter.unusedVariables false in
-/-- Main DataFrame constructor with optional parameters -/
-def pyDataFrame {α β γ} [PastaLean.PyIterable α β] [PastaLean.PyIterable β γ] [PastaLean.PyPrintable γ] [Inhabited β]
-  (data : α)
-  (index : Option (List String) := none) (columns : Option (List String) := none) (dtype copy : Unit := ())
-    : DataFrame :=
-  pyDataFrameFunc data index columns
-
-/-- Accessor for column names -/
-def DataFrame.getColumns (df : DataFrame) : List String :=
-  df.columns.keys
-
-/-- Accessor for row indices -/
-def DataFrame.getIndex (df : DataFrame) : List String :=
-  df.index
-
-/-- Get a specific column by name -/
-def DataFrame.getColumn? (df : DataFrame) (colName : String) : Option (List String) :=
-  df.columns.get? colName
-
-def DataFrame.shape (df : DataFrame) : Int × Int :=
-  let nRows := df.index.length
-  let nCols := df.columns.size
-  (nRows, nCols)
-
-def DataFrame.empty (df : DataFrame) : Bool :=
-  df.columns.isEmpty
-
-def DataFrame.head (df : DataFrame) (n : Nat := 5) : DataFrame :=
-  let nRows := min n df.index.length
-  let newIndex := df.index.take nRows
-  let newColumns := df.columns.map fun _ colData => (colData.take nRows)
-  { columns := Std.HashMap.ofList newColumns.toList, index := newIndex }
-
-def DataFrame.at (df : DataFrame) (rowLabel : String) (colName : String) : String :=
-  match df.index.idxOf? rowLabel, df.columns.get? colName with
-  | some rowIndex, some colData =>
-    colData[rowIndex]!
-  | _, _ => panic! "KeyError: Row label or column name not found in DataFrame"
-
-set_option linter.unusedVariables false in
-def DataFrame.insert (df : DataFrame) (loc : Nat) (colName : String) (colData : List String) (ad : Bool) : DataFrame :=
-  if colData.length != df.index.length then
-    panic! "ValueError: Length of new column data must match number of rows in DataFrame"
-  else
-    let newColumns := df.columns.insert colName colData
-    { columns := newColumns, index := df.index }
-
-def prettyPrintdf (df : DataFrame) : IO Unit := do
-  let colNames := df.getColumns
-  let indexLabels := df.getIndex
-  let numRows := indexLabels.length
-
-  -- Build header
-  let header := "      | " ++ String.intercalate " | " colNames
-
-  -- Build rows
-  let rows := List.range numRows |>.map fun i =>
-    let label := indexLabels[i]? |>.getD ""
-    let rowValues := colNames.map fun colName =>
-      let colData := df.columns.getD colName []
-      colData[i]? |>.getD "NaN"
-    label ++ " | " ++ String.intercalate " | " rowValues
-
-  -- Combine header and rows
-  IO.println (String.intercalate "\n" (header :: rows))
-
--- end Libraries.pandas
-def l := pyDataFrame [[1, 2], [3, 4]]  (columns := ["col1", "col2"])
-#eval prettyPrintdf ( l.head )
-#eval l.at "row0" "col1"  -- Should return "1"
-#eval [1,2].find? (fun x => x > 1)
+end DataFrame
+end Libraries.pandas

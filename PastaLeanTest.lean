@@ -6,3 +6,4 @@ import PastaLeanTest.Libraries.numpy.numpy_test
 import PastaLeanTest.Libraries.numpy.numpy_extended_test
 import PastaLeanTest.Libraries.math.math_test
 import PastaLeanTest.Libraries.scipy.scipy_test
+import PastaLeanTest.Libraries.pandas.pandas_test
