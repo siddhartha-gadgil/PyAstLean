@@ -2,6 +2,8 @@ import PastaLean.PyGens.Core.Utils
 import PastaLean.PyVerify.AssertTactic
 import Std.Tactic.Do
 
+set_option linter.unusedVariables false
+
 /-!
 # PASSTA contract codege
 

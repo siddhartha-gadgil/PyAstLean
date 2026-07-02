@@ -1,5 +1,7 @@
 import Libraries.pandas.Series
 
+set_option linter.unusedVariables false
+
 /-!
 # pandas `DataFrame` — core
 

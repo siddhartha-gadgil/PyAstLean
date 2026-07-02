@@ -30,15 +30,15 @@ def formatFloat (f : Float) : String :=
   else
     let s := toString f
     if s.contains '.' then
-      let trimmed := String.mk (s.toList.reverse.dropWhile (· == '0')).reverse
+      let trimmed := String.ofList (s.toList.reverse.dropWhile (· == '0')).reverse
       if trimmed.endsWith "." then trimmed ++ "0" else trimmed
     else s
 
 /-- Left-pad `s` with spaces to width `w` (right-justify), for numeric columns. -/
-def padLeft (s : String) (w : Nat) : String := String.mk (List.replicate (w - s.length) ' ') ++ s
+def padLeft (s : String) (w : Nat) : String := String.ofList (List.replicate (w - s.length) ' ') ++ s
 
 /-- Right-pad `s` with spaces to width `w` (left-justify), for index labels. -/
-def padRight (s : String) (w : Nat) : String := s ++ String.mk (List.replicate (w - s.length) ' ')
+def padRight (s : String) (w : Nat) : String := s ++ String.ofList (List.replicate (w - s.length) ' ')
 
 namespace Cell
 
